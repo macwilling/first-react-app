@@ -1,6 +1,6 @@
 // src/App.jsx
 import { useState, useEffect } from "react";
-import dayjs from "dayjs";
+import dayjs from "dayjs"; // Keep for other components if they use it
 import {
   AppShell,
   Burger,
@@ -26,17 +26,7 @@ import ShoppingList from "./components/ShoppingList";
 import MealPlanner from "./components/MealPlanner";
 import NotesBoard from "./components/NotesBoard";
 
-// Remove initialChores, it will be handled by Firestore
-
-const initialTasks = [
-  // Keep this for now, will be refactored later
-  {
-    id: 1,
-    title: "Replace HVAC Filter",
-    dueDate: dayjs().add(5, "days").valueOf(),
-  },
-  { id: 2, title: "Clean Gutters", dueDate: dayjs().add(30, "days").valueOf() },
-];
+// Remove initialTasks - MaintenanceList will fetch from Firestore
 
 const initialShoppingLists = [
   // Keep this for now
@@ -96,15 +86,13 @@ export default function App() {
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
   const [activeView, setActiveView] = useState("dashboard");
 
-  // Chores state will be managed by ChoreList with Firestore,
-  // but App still needs to pass something or ChoreList needs to fetch itself.
-  // For now, App.jsx won't hold chore data directly. ChoreList will fetch its own data.
-  // We can pass setChores if ChoreList needs to update some aggregate data in App, but let's simplify.
+  // Remove `tasks` state - MaintenanceList will manage its own via Firestore
+  // const [tasks, setTasks] = useState(() => {
+  //   const savedTasks = localStorage.getItem("familyTasks");
+  //   return savedTasks ? JSON.parse(savedTasks) : initialTasks;
+  // });
 
-  const [tasks, setTasks] = useState(() => {
-    const savedTasks = localStorage.getItem("familyTasks");
-    return savedTasks ? JSON.parse(savedTasks) : initialTasks;
-  });
+  // Keep other states that are still client-side for now
   const [shoppingLists, setShoppingLists] = useState(() => {
     const saved = localStorage.getItem("familyShoppingLists");
     return saved ? JSON.parse(saved) : initialShoppingLists;
@@ -118,10 +106,11 @@ export default function App() {
     return saved ? JSON.parse(saved) : initialNotes;
   });
 
-  // Remove localStorage for familyChores
-  useEffect(() => {
-    localStorage.setItem("familyTasks", JSON.stringify(tasks));
-  }, [tasks]);
+  // Remove localStorage for familyTasks
+  // useEffect(() => {
+  //   localStorage.setItem("familyTasks", JSON.stringify(tasks));
+  // }, [tasks]);
+
   useEffect(() => {
     localStorage.setItem("familyShoppingLists", JSON.stringify(shoppingLists));
   }, [shoppingLists]);
@@ -144,30 +133,28 @@ export default function App() {
   const renderView = () => {
     switch (activeView) {
       case "chores":
-        // ChoreList will now fetch and manage its own data from Firestore.
-        // We don't need to pass `chores` or `setChores` from App.jsx for Firestore integration.
-        return <ChoreList />;
+        return <ChoreList />; // Already refactored
       case "maintenance":
-        return <MaintenanceList tasks={tasks} setTasks={setTasks} />; // Will refactor later
+        // MaintenanceList will now fetch and manage its own data from Firestore.
+        return <MaintenanceList />;
       case "shopping":
         return (
           <ShoppingList
             shoppingListsData={shoppingLists}
             setShoppingListsData={setShoppingLists}
           />
-        ); // Will refactor later
+        );
       case "meals":
         return (
           <MealPlanner mealPlanData={mealPlan} setMealPlanData={setMealPlan} />
-        ); // Will refactor later
+        );
       case "notes":
-        return <NotesBoard notesData={notes} setNotesData={setNotes} />; // Will refactor later
+        return <NotesBoard notesData={notes} setNotesData={setNotes} />;
       case "dashboard":
       default:
         return (
           <Dashboard
-            // chores prop will be removed or handled differently, as ChoreList fetches its own
-            tasks={tasks}
+            // tasks prop will be removed or handled differently by Dashboard later
             shoppingLists={shoppingLists}
             mealPlan={mealPlan}
             notes={notes}

@@ -18,7 +18,9 @@ import {
   Box,
   MultiSelect,
   NumberInput,
-  LoadingOverlay, // For loading state
+  LoadingOverlay,
+  List,
+  ThemeIcon,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -26,9 +28,11 @@ import {
   IconTrash,
   IconPencil,
   IconRepeat,
-} from "@tabler/icons-react";
+  IconCalendarDue,
+} from "@tabler/icons-react"; // IconPencil is already here
 import dayjs from "dayjs";
-import { db } from "../firebase"; // Import your Firebase config
+import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
+import { db } from "../firebase";
 import {
   collection,
   query,
@@ -38,11 +42,13 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  Timestamp, // For Firestore Timestamps
-  serverTimestamp, // For server-side timestamps
+  serverTimestamp,
+  Timestamp,
 } from "firebase/firestore";
 
-const family = ["Alice", "Bob", "Charlie", "Mom", "Dad"]; // Keep for assignment dropdown
+dayjs.extend(isSameOrBefore);
+
+const family = ["Alice", "Bob", "Charlie", "Mom", "Dad"];
 const familyColors = {
   Alice: "pink",
   Bob: "indigo",
@@ -65,13 +71,68 @@ const daysOfWeek = [
   { value: "6", label: "Saturday" },
 ];
 
-const CHORES_COLLECTION = "chores"; // Define collection name
+const CHORES_COLLECTION = "chores";
+
+// --- Recurrence Helper Functions ---
+const getFirstNextDueDate = (
+  baseDate,
+  recurrenceType,
+  recurrenceInterval,
+  recurrenceDays = []
+) => {
+  let startDate = dayjs(baseDate).startOf("day");
+  if (recurrenceType === "daily") {
+    return startDate.add(recurrenceInterval, "day").valueOf();
+  } else if (recurrenceType === "weekly") {
+    const numericRecurrenceDays = recurrenceDays
+      .map(Number)
+      .sort((a, b) => a - b);
+    if (numericRecurrenceDays.length === 0) {
+      return startDate.add(recurrenceInterval, "week").valueOf();
+    }
+    let potentialDate = startDate.clone();
+    // Check from today onwards to find the first matching day
+    for (let i = 0; i < 14 + 7 * recurrenceInterval; i++) {
+      potentialDate = startDate.add(i, "day");
+      if (numericRecurrenceDays.includes(potentialDate.day())) {
+        return potentialDate.valueOf();
+      }
+    }
+    return startDate.add(recurrenceInterval, "week").valueOf(); // Fallback
+  }
+  return startDate.add(1, "day").valueOf();
+};
+
+const getNextDueDateAfterCompletion = (
+  lastCompletedOrDueDate,
+  recurrenceType,
+  recurrenceInterval,
+  recurrenceDays = []
+) => {
+  let anchorDate = dayjs(lastCompletedOrDueDate).startOf("day");
+  if (recurrenceType === "daily") {
+    return anchorDate.add(recurrenceInterval, "day").valueOf();
+  } else if (recurrenceType === "weekly") {
+    let newAnchorBase = anchorDate.clone();
+    // This simplified logic advances by the interval from the anchorDate's day of week.
+    // If specific days are selected, it will land on the same day of week, X weeks later.
+    // More complex logic would be needed if, e.g., after completing a "Monday" task in a "M,W,F" schedule,
+    // the next should be "Wednesday" of the same week (if interval allows).
+    // For now, it advances the whole week chunk.
+    if (recurrenceDays.length > 0) {
+      return anchorDate.add(recurrenceInterval, "week").valueOf();
+    } else {
+      return anchorDate.add(recurrenceInterval, "week").valueOf();
+    }
+  }
+  return anchorDate.add(1, "day").valueOf();
+};
 
 export default function ChoreList() {
-  const [chores, setChores] = useState([]); // Local state to hold chores from Firestore
-  const [loading, setLoading] = useState(true); // Loading state
+  const [allChores, setAllChores] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [opened, { open, close }] = useDisclosure(false);
-  const [editingChore, setEditingChore] = useState(null); // Chore object from Firestore (includes id)
+  const [editingChore, setEditingChore] = useState(null);
   const [newChore, setNewChore] = useState({
     title: "",
     assignedTo: family[0] || "",
@@ -81,7 +142,6 @@ export default function ChoreList() {
     recurrenceDays: [],
   });
 
-  // --- Firestore Data Fetching (Real-time) ---
   useEffect(() => {
     setLoading(true);
     const q = query(
@@ -95,7 +155,7 @@ export default function ChoreList() {
         querySnapshot.forEach((doc) => {
           choresData.push({ ...doc.data(), id: doc.id });
         });
-        setChores(choresData);
+        setAllChores(choresData);
         setLoading(false);
       },
       (error) => {
@@ -103,13 +163,12 @@ export default function ChoreList() {
         setLoading(false);
       }
     );
-
-    return () => unsubscribe(); // Cleanup listener on component unmount
-  }, []); // Empty dependency array means this runs once on mount
+    return () => unsubscribe();
+  }, []);
 
   const handleOpenModal = (choreToEdit = null) => {
     if (choreToEdit) {
-      setEditingChore(choreToEdit); // choreToEdit is the full chore object from state
+      setEditingChore(choreToEdit);
       setNewChore({
         title: choreToEdit.title,
         assignedTo: choreToEdit.assignedTo,
@@ -117,6 +176,8 @@ export default function ChoreList() {
         recurrenceType: choreToEdit.recurrenceType || "daily",
         recurrenceInterval: choreToEdit.recurrenceInterval || 1,
         recurrenceDays: choreToEdit.recurrenceDays || [],
+        // Store nextDueDate from choreToEdit if needed for modal logic, but modal doesn't directly edit it.
+        // nextDueDate: choreToEdit.nextDueDate ? choreToEdit.nextDueDate.toDate() : null
       });
     } else {
       setEditingChore(null);
@@ -133,37 +194,78 @@ export default function ChoreList() {
   };
 
   const handleSubmitChore = async () => {
-    const choreDataPayload = {
-      title: newChore.title,
-      assignedTo: newChore.assignedTo,
-      isRecurring: newChore.isRecurring,
-      // Firestore specific data types / handling
-      done: false, // New chores are not done
-      // completedAt will be set when done
-    };
+    const {
+      title,
+      assignedTo,
+      isRecurring,
+      recurrenceType,
+      recurrenceInterval,
+      recurrenceDays,
+    } = newChore;
+    const choreDataPayload = { title, assignedTo, isRecurring, done: false };
 
-    if (newChore.isRecurring) {
-      choreDataPayload.recurrenceType = newChore.recurrenceType;
+    if (isRecurring) {
+      choreDataPayload.recurrenceType = recurrenceType;
       choreDataPayload.recurrenceInterval = Math.max(
         1,
-        Number(newChore.recurrenceInterval) || 1
+        Number(recurrenceInterval) || 1
       );
       choreDataPayload.recurrenceDays =
-        newChore.recurrenceType === "weekly" ? newChore.recurrenceDays : [];
+        recurrenceType === "weekly" ? recurrenceDays : [];
+
+      // If editing an existing recurring chore AND the recurrence pattern has changed,
+      // you *might* want to recalculate nextDueDate here.
+      // For simplicity, we'll assume nextDueDate is primarily updated upon instance completion.
+      // However, if it's a NEW recurring chore, calculate its first nextDueDate.
+      if (!editingChore) {
+        const firstDueDate = getFirstNextDueDate(
+          dayjs(),
+          recurrenceType,
+          choreDataPayload.recurrenceInterval,
+          choreDataPayload.recurrenceDays
+        );
+        choreDataPayload.nextDueDate = Timestamp.fromMillis(firstDueDate);
+      } else if (editingChore && !editingChore.nextDueDate && isRecurring) {
+        // If editing a chore that was made recurring and didn't have a nextDueDate yet
+        const firstDueDate = getFirstNextDueDate(
+          dayjs(),
+          recurrenceType,
+          choreDataPayload.recurrenceInterval,
+          choreDataPayload.recurrenceDays
+        );
+        choreDataPayload.nextDueDate = Timestamp.fromMillis(firstDueDate);
+      }
+      // If editing a chore and changing it FROM non-recurring TO recurring:
+      if (editingChore && !editingChore.isRecurring && isRecurring) {
+        const firstDueDate = getFirstNextDueDate(
+          dayjs(),
+          recurrenceType,
+          choreDataPayload.recurrenceInterval,
+          choreDataPayload.recurrenceDays
+        );
+        choreDataPayload.nextDueDate = Timestamp.fromMillis(firstDueDate);
+        choreDataPayload.lastInstanceCompletedAt = null; // Reset this
+      }
+    } else {
+      // If it's NOT recurring (or changed from recurring to non-recurring)
+      choreDataPayload.recurrenceType = null;
+      choreDataPayload.recurrenceInterval = null;
+      choreDataPayload.recurrenceDays = [];
+      choreDataPayload.nextDueDate = null;
+      choreDataPayload.lastInstanceCompletedAt = null;
     }
 
     setLoading(true);
     try {
       if (editingChore && editingChore.id) {
-        // Update existing chore
         const choreRef = doc(db, CHORES_COLLECTION, editingChore.id);
-        await updateDoc(choreRef, choreDataPayload); // Don't update createdAt
+        await updateDoc(choreRef, choreDataPayload);
       } else {
-        // Add new chore
         await addDoc(collection(db, CHORES_COLLECTION), {
           ...choreDataPayload,
-          createdAt: serverTimestamp(), // Use server timestamp for creation
+          createdAt: serverTimestamp(),
           completedAt: null,
+          lastInstanceCompletedAt: isRecurring ? null : undefined, // Only relevant for recurring
         });
       }
     } catch (error) {
@@ -173,34 +275,33 @@ export default function ChoreList() {
     close();
   };
 
-  const toggleDone = async (choreId, currentDoneStatus, isRecurringChore) => {
+  const handleCompleteInstance = async (chore) => {
+    if (!chore || !chore.id) return;
     setLoading(true);
-    const choreRef = doc(db, CHORES_COLLECTION, choreId);
+    const choreRef = doc(db, CHORES_COLLECTION, chore.id);
     try {
-      if (isRecurringChore) {
-        if (!currentDoneStatus) {
-          // If marking a recurring chore as done
-          // For recurring: log completion (optional step for full history, not done here yet), then reset
-          await updateDoc(choreRef, {
-            // lastCompletedAt: serverTimestamp(), // Example: if you want to track actual completions
-            done: false, // Reset for next time
-            completedAt: null,
-          });
-        } else {
-          // If unchecking a recurring chore (making it pending from a 'false' state)
-          // This case might need more thought - usually recurring chores go from pending to done, then reset.
-          // For now, this will just make it "not done".
-          await updateDoc(choreRef, { done: false, completedAt: null });
-        }
-      } else {
-        // For non-recurring chores
+      if (chore.isRecurring) {
+        const baseDateForNext = chore.nextDueDate
+          ? chore.nextDueDate.toMillis()
+          : Date.now();
+        const newNextDueDateMillis = getNextDueDateAfterCompletion(
+          baseDateForNext,
+          chore.recurrenceType,
+          chore.recurrenceInterval,
+          chore.recurrenceDays
+        );
         await updateDoc(choreRef, {
-          done: !currentDoneStatus,
-          completedAt: !currentDoneStatus ? serverTimestamp() : null,
+          lastInstanceCompletedAt: serverTimestamp(),
+          nextDueDate: Timestamp.fromMillis(newNextDueDateMillis),
+        });
+      } else {
+        await updateDoc(choreRef, {
+          done: true,
+          completedAt: serverTimestamp(),
         });
       }
     } catch (error) {
-      console.error("Error updating chore status: ", error);
+      console.error("Error completing chore instance: ", error);
     }
     setLoading(false);
   };
@@ -216,31 +317,76 @@ export default function ChoreList() {
     setLoading(false);
   };
 
-  const rows = chores.map((chore) => (
+  const today = dayjs().startOf("day");
+  const activeChores = allChores
+    .filter((chore) => {
+      if (!chore.isRecurring) return !chore.done;
+      if (chore.nextDueDate && chore.nextDueDate.toDate) {
+        return dayjs(chore.nextDueDate.toDate()).isSameOrBefore(today, "day");
+      }
+      return false;
+    })
+    .sort((a, b) => {
+      const aDate = a.isRecurring
+        ? a.nextDueDate?.toMillis() || Infinity
+        : a.createdAt?.toMillis() || Infinity;
+      const bDate = b.isRecurring
+        ? b.nextDueDate?.toMillis() || Infinity
+        : b.createdAt?.toMillis() || Infinity;
+      return aDate - bDate;
+    });
+
+  const upcomingRecurringChores = allChores
+    .filter((chore) => {
+      if (!chore.isRecurring || !chore.nextDueDate || !chore.nextDueDate.toDate)
+        return false;
+      return dayjs(chore.nextDueDate.toDate()).isAfter(today, "day");
+    })
+    .sort((a, b) => a.nextDueDate.toMillis() - b.nextDueDate.toMillis());
+
+  const rows = activeChores.map((chore) => (
     <Table.Tr
       key={chore.id}
-      bg={chore.done && !chore.isRecurring ? "gray.1" : undefined}
+      bg={!chore.isRecurring && chore.done ? "gray.1" : undefined}
     >
       <Table.Td>
         <Checkbox
-          checked={chore.done}
-          onChange={() => toggleDone(chore.id, chore.done, chore.isRecurring)}
+          checked={!chore.isRecurring && chore.done}
+          onChange={() => handleCompleteInstance(chore)}
           aria-label="Mark as done"
         />
       </Table.Td>
       <Table.Td>
         <Group gap="xs">
-          {chore.isRecurring && <IconRepeat size={16} color="gray" />}
-          <Text fw={500} strikethrough={chore.done && !chore.isRecurring}>
+          {chore.isRecurring && (
+            <IconRepeat
+              size={16}
+              color="gray"
+              title={`Recurs every ${chore.recurrenceInterval} ${chore.recurrenceType}`}
+            />
+          )}
+          <Text fw={500} strikethrough={!chore.isRecurring && chore.done}>
             {chore.title}
           </Text>
         </Group>
-        {chore.done && chore.completedAt && !chore.isRecurring && (
+        {chore.isRecurring && chore.nextDueDate && (
+          <Text size="xs" c="dimmed">
+            Due: {dayjs(chore.nextDueDate.toDate()).format("ddd, MMM D")}
+          </Text>
+        )}
+        {!chore.isRecurring && chore.done && chore.completedAt && (
           <Text size="xs" c="dimmed">
             Completed:{" "}
-            {chore.completedAt
-              ? dayjs(chore.completedAt.toDate()).format("MMM D, h:mm A")
-              : "N/A"}
+            {dayjs(chore.completedAt.toDate()).format("MMM D, h:mm A")}
+          </Text>
+        )}
+        {chore.isRecurring && chore.lastInstanceCompletedAt && (
+          <Text size="xs" c="dimmed" fs="italic">
+            (Last done:{" "}
+            {dayjs(chore.lastInstanceCompletedAt.toDate()).format(
+              "MMM D, h:mm A"
+            )}
+            )
           </Text>
         )}
       </Table.Td>
@@ -257,10 +403,24 @@ export default function ChoreList() {
         </Group>
       </Table.Td>
       <Table.Td>
-        {chore.done && !chore.isRecurring ? (
+        {!chore.isRecurring && chore.done ? (
           <Badge color="green">Done</Badge>
+        ) : chore.isRecurring &&
+          chore.nextDueDate &&
+          dayjs(chore.nextDueDate.toDate()).isBefore(today, "day") ? (
+          <Badge color="red" variant="light">
+            Overdue
+          </Badge>
+        ) : chore.isRecurring &&
+          chore.nextDueDate &&
+          dayjs(chore.nextDueDate.toDate()).isSame(today, "day") ? (
+          <Badge color="orange" variant="light">
+            Due Today
+          </Badge>
         ) : (
-          <Badge color="orange">Pending</Badge>
+          <Badge color="blue" variant="outline">
+            Pending
+          </Badge>
         )}
       </Table.Td>
       <Table.Td>
@@ -287,139 +447,194 @@ export default function ChoreList() {
   ));
 
   return (
-    <Paper
-      shadow="md"
-      p="lg"
-      radius="md"
-      withBorder
-      style={{ position: "relative" }}
-    >
-      <LoadingOverlay
-        visible={loading}
-        zIndex={1000}
-        overlayProps={{ radius: "sm", blur: 2 }}
-      />
-      <Modal
-        opened={opened}
-        onClose={close}
-        title={editingChore ? "Edit Chore" : "Add New Chore"}
-        centered
-        size="md"
+    <>
+      <Paper
+        shadow="md"
+        p="lg"
+        radius="md"
+        withBorder
+        style={{ position: "relative" }}
       >
-        {/* Modal content for adding/editing chores remains largely the same as your last version */}
-        <Stack>
-          <TextInput
-            label="Chore Title"
-            placeholder="e.g., Wash dishes"
-            value={newChore.title}
-            onChange={(e) =>
-              setNewChore({ ...newChore, title: e.currentTarget.value })
-            }
-            data-autofocus
-          />
-          <Select
-            label="Assign To"
-            placeholder="Select family member"
-            data={family}
-            value={newChore.assignedTo}
-            onChange={(value) =>
-              setNewChore({ ...newChore, assignedTo: value || family[0] || "" })
-            }
-            allowDeselect={false}
-          />
-          <Checkbox
-            mt="sm"
-            label="Recurring Chore"
-            checked={newChore.isRecurring}
-            onChange={(event) =>
-              setNewChore({
-                ...newChore,
-                isRecurring: event.currentTarget.checked,
-              })
-            }
-          />
-          {newChore.isRecurring && (
-            <Paper p="sm" withBorder radius="sm" mt="xs">
-              <Group grow>
-                <NumberInput
-                  label="Repeats every"
-                  value={newChore.recurrenceInterval}
-                  onChange={(value) =>
-                    setNewChore({
-                      ...newChore,
-                      recurrenceInterval: Number(value) || 1,
-                    })
-                  }
-                  min={1}
-                  step={1}
-                />
-                <Select
-                  label="Period"
-                  data={recurrenceTypes}
-                  value={newChore.recurrenceType}
-                  onChange={(value) =>
-                    setNewChore({
-                      ...newChore,
-                      recurrenceType: value || "daily",
-                    })
-                  }
-                  allowDeselect={false}
-                />
-              </Group>
-              {newChore.recurrenceType === "weekly" && (
-                <MultiSelect
-                  mt="sm"
-                  label="On these days of the week"
-                  data={daysOfWeek}
-                  value={newChore.recurrenceDays}
-                  onChange={(value) =>
-                    setNewChore({ ...newChore, recurrenceDays: value })
-                  }
-                  placeholder="Select days"
-                  clearable
-                />
-              )}
-            </Paper>
-          )}
-          <Button
-            onClick={handleSubmitChore}
-            fullWidth
-            mt="md"
-            loading={loading}
-          >
-            {editingChore ? "Save Changes" : "Add Chore"}
-          </Button>
-        </Stack>
-      </Modal>
-
-      <Group justify="space-between" mb="xl">
-        <Title order={2}>Chore Tracker</Title>
-        <Button
-          onClick={() => handleOpenModal()}
-          leftSection={<IconPlus size={18} />}
+        <LoadingOverlay
+          visible={loading}
+          zIndex={1000}
+          overlayProps={{ radius: "sm", blur: 2 }}
+        />
+        <Modal
+          opened={opened}
+          onClose={close}
+          title={editingChore ? "Edit Chore" : "Add New Chore"}
+          centered
+          size="md"
         >
-          New Chore
-        </Button>
-      </Group>
+          <Stack>
+            <TextInput
+              label="Chore Title"
+              placeholder="e.g., Wash dishes"
+              value={newChore.title}
+              onChange={(e) =>
+                setNewChore({ ...newChore, title: e.currentTarget.value })
+              }
+              data-autofocus
+            />
+            <Select
+              label="Assign To"
+              placeholder="Select family member"
+              data={family}
+              value={newChore.assignedTo}
+              onChange={(value) =>
+                setNewChore({
+                  ...newChore,
+                  assignedTo: value || family[0] || "",
+                })
+              }
+              allowDeselect={false}
+            />
+            <Checkbox
+              mt="sm"
+              label="Recurring Chore"
+              checked={newChore.isRecurring}
+              onChange={(event) =>
+                setNewChore({
+                  ...newChore,
+                  isRecurring: event.currentTarget.checked,
+                })
+              }
+            />
+            {newChore.isRecurring && (
+              <Paper p="sm" withBorder radius="sm" mt="xs">
+                <Group grow>
+                  <NumberInput
+                    label="Repeats every"
+                    value={newChore.recurrenceInterval}
+                    onChange={(value) =>
+                      setNewChore({
+                        ...newChore,
+                        recurrenceInterval: Number(value) || 1,
+                      })
+                    }
+                    min={1}
+                    step={1}
+                  />
+                  <Select
+                    label="Period"
+                    data={recurrenceTypes}
+                    value={newChore.recurrenceType}
+                    onChange={(value) =>
+                      setNewChore({
+                        ...newChore,
+                        recurrenceType: value || "daily",
+                      })
+                    }
+                    allowDeselect={false}
+                  />
+                </Group>
+                {newChore.recurrenceType === "weekly" && (
+                  <MultiSelect
+                    mt="sm"
+                    label="On these days of the week"
+                    data={daysOfWeek}
+                    value={newChore.recurrenceDays}
+                    onChange={(value) =>
+                      setNewChore({ ...newChore, recurrenceDays: value })
+                    }
+                    placeholder="Select days"
+                    clearable
+                  />
+                )}
+                <Text size="xs" c="dimmed" mt="xs">
+                  Note: The first due date will be the next available slot.
+                  Editing recurrence settings won't change an existing 'Next Due
+                  Date' until the current instance is completed.
+                </Text>
+              </Paper>
+            )}
+            <Button
+              onClick={handleSubmitChore}
+              fullWidth
+              mt="md"
+              loading={loading}
+            >
+              {editingChore ? "Save Changes" : "Add Chore"}
+            </Button>
+          </Stack>
+        </Modal>
 
-      {chores.length > 0 ? (
-        <Box style={{ overflowX: "auto" }}>
-          <Table striped highlightOnHover verticalSpacing="sm">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th style={{ width: 40 }} /> <Table.Th>Title</Table.Th>
-                <Table.Th>Assigned To</Table.Th> <Table.Th>Status</Table.Th>
-                <Table.Th>Actions</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>{rows}</Table.Tbody>
-          </Table>
-        </Box>
-      ) : !loading ? ( // Only show "No chores" if not loading
-        <Text c="dimmed" align="center" mt="xl">
-          No chores yet. Add some to get started!
-        </Text>
-      ) : null}
-    </Paper>
+        <Group justify="space-between" mb="xl">
+          <Title order={2}>Active Chores</Title>
+          <Button
+            onClick={() => handleOpenModal()}
+            leftSection={<IconPlus size={18} />}
+          >
+            New Chore
+          </Button>
+        </Group>
+
+        {activeChores.length > 0 ? (
+          <Box style={{ overflowX: "auto" }}>
+            <Table striped highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th style={{ width: 40 }} /> <Table.Th>Title</Table.Th>
+                  <Table.Th>Assigned To</Table.Th> <Table.Th>Status</Table.Th>
+                  <Table.Th>Actions</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>{rows}</Table.Tbody>
+            </Table>
+          </Box>
+        ) : !loading ? (
+          <Text c="dimmed" align="center" mt="xl">
+            No active chores. Well done!
+          </Text>
+        ) : null}
+      </Paper>
+
+      {/* --- Upcoming Scheduled Chores Section --- */}
+      {upcomingRecurringChores.length > 0 && !loading && (
+        <Paper shadow="sm" p="lg" radius="md" withBorder mt="xl">
+          <Title order={3} mb="md">
+            Upcoming Scheduled Chores
+          </Title>
+          <List spacing="sm" size="sm">
+            {upcomingRecurringChores.map((chore) => (
+              <List.Item
+                key={chore.id}
+                icon={
+                  <ThemeIcon color="gray" size={24} radius="xl">
+                    <IconCalendarDue size={16} />
+                  </ThemeIcon>
+                }
+              >
+                <Group justify="space-between">
+                  <Box>
+                    <Text>{chore.title}</Text>
+                    <Text size="xs" c="dimmed">
+                      Assigned to: {chore.assignedTo}
+                    </Text>
+                  </Box>
+                  <Group>
+                    {" "}
+                    {/* Group for badge and edit button */}
+                    <Badge color="blue" variant="light">
+                      Due:{" "}
+                      {dayjs(chore.nextDueDate.toDate()).format("ddd, MMM D")}
+                    </Badge>
+                    <ActionIcon
+                      variant="subtle"
+                      color="blue"
+                      onClick={() => handleOpenModal(chore)}
+                      title="Edit Chore"
+                    >
+                      <IconPencil size={16} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+              </List.Item>
+            ))}
+          </List>
+        </Paper>
+      )}
+    </>
   );
 }

@@ -16,7 +16,6 @@ import {
   IconCheck,
   IconClockHour4,
   IconListCheck,
-  // IconCalendarEvent, // Removed (or keep if used elsewhere, but remove for events)
   IconTool,
   IconShoppingCart,
   IconToolsKitchen2,
@@ -29,26 +28,35 @@ const RECENT_DAYS = 7;
 const UPCOMING_DAYS = 7;
 
 export default function Dashboard({
-  chores,
-  tasks,
+  chores = [], // <-- MODIFICATION: Default to empty array if chores prop is not provided
+  tasks = [], // <-- MODIFICATION: Default to empty array if task prop is not provided
   shoppingLists,
-  // calendarEvents, // Removed
   mealPlan,
   notes,
 }) {
+  // This line (or similar) was causing the error if 'chores' was undefined
   const recentlyCompletedChores = chores
     .filter(
       (chore) =>
         chore.done &&
-        chore.completedAt &&
-        dayjs(chore.completedAt).isAfter(dayjs().subtract(RECENT_DAYS, "day"))
+        chore.completedAt && // Ensure completedAt exists (it should be a Firestore Timestamp or null)
+        (chore.completedAt?.toDate
+          ? dayjs(chore.completedAt.toDate())
+          : dayjs(chore.completedAt)
+        ).isAfter(dayjs().subtract(RECENT_DAYS, "day"))
     )
-    .sort(
-      (a, b) => dayjs(b.completedAt).valueOf() - dayjs(a.completedAt).valueOf()
-    )
+    .sort((a, b) => {
+      const dateA = a.completedAt?.toDate
+        ? dayjs(a.completedAt.toDate())
+        : dayjs(a.completedAt);
+      const dateB = b.completedAt?.toDate
+        ? dayjs(b.completedAt.toDate())
+        : dayjs(b.completedAt);
+      return dateB.valueOf() - dateA.valueOf();
+    })
     .slice(0, 5);
 
-  const upcomingMaintenanceTasks = tasks
+  const upcomingMaintenanceTasks = (tasks || []) // Add guard for tasks as well, just in case
     .filter(
       (task) =>
         task.dueDate && dayjs(task.dueDate).isAfter(dayjs().subtract(1, "day"))
@@ -57,7 +65,6 @@ export default function Dashboard({
     .slice(0, 5);
 
   const getDueDateBadge = (dueDate) => {
-    // Simplified as itemType 'event' is removed
     const today = dayjs().startOf("day");
     const date = dayjs(dueDate).startOf("day");
 
@@ -73,8 +80,6 @@ export default function Dashboard({
   const shoppingListSummary = primaryShoppingList
     ? primaryShoppingList.items.filter((item) => !item.done).slice(0, 5)
     : [];
-
-  // Removed upcomingEvents logic
 
   const todayStr = dayjs().format("YYYY-MM-DD");
   const tomorrowStr = dayjs().add(1, "day").format("YYYY-MM-DD");
@@ -113,14 +118,23 @@ export default function Dashboard({
                       {chore.title} ({chore.assignedTo})
                     </Text>
                     <Text c="dimmed" size="xs">
-                      {dayjs(chore.completedAt).format("MMM D")}
+                      {/* Handle Firestore Timestamp for completedAt */}
+                      {chore.completedAt
+                        ? dayjs(
+                            chore.completedAt.toDate
+                              ? chore.completedAt.toDate()
+                              : chore.completedAt
+                          ).format("MMM D")
+                        : ""}
                     </Text>
                   </Group>
                 </List.Item>
               ))}
             </List>
           ) : (
-            <Text c="dimmed">No chores completed recently.</Text>
+            <Text c="dimmed">
+              No chores completed recently (or chore data not available).
+            </Text>
           )}
         </Paper>
       </Grid.Col>
@@ -209,8 +223,6 @@ export default function Dashboard({
 
       {/* Meal Plan Quick View */}
       <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
-        {" "}
-        {/* Adjusted span to fill row if 3 items */}
         <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
           <Group mb="md">
             <ThemeIcon size="lg" variant="light" color="lime">
@@ -250,8 +262,6 @@ export default function Dashboard({
 
       {/* Notes Quick View */}
       <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
-        {" "}
-        {/* Adjusted span */}
         <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
           <Group mb="md">
             <ThemeIcon size="lg" variant="light" color="yellow">
@@ -288,7 +298,6 @@ export default function Dashboard({
           )}
         </Paper>
       </Grid.Col>
-      {/* Empty column to help with layout if needed, or adjust spans above for 2 items per row on lg */}
       <Grid.Col span={{ base: 12, md: 6, lg: 4 }} />
     </Grid>
   );
