@@ -15,41 +15,21 @@ import {
   IconListCheck,
   IconTool,
   IconShoppingCart,
-  // IconCalendarEvent, // Removed
   IconToolsKitchen2,
   IconNote,
 } from "@tabler/icons-react";
 
-// Import components
 import ChoreList from "./components/ChoreList";
 import MaintenanceList from "./components/MaintenanceList";
 import Dashboard from "./components/Dashboard";
 import ShoppingList from "./components/ShoppingList";
-// import FamilyCalendar from "./components/FamilyCalendar"; // Removed
 import MealPlanner from "./components/MealPlanner";
 import NotesBoard from "./components/NotesBoard";
 
-// Sample initial data
-const initialChores = [
-  {
-    id: 1,
-    title: "Wash Dishes",
-    assignedTo: "Alice",
-    done: true,
-    createdAt: new Date("2025-05-24T10:00:00Z"),
-    completedAt: new Date("2025-05-25T11:00:00Z"),
-  },
-  {
-    id: 2,
-    title: "Take out Trash",
-    assignedTo: "Bob",
-    done: false,
-    createdAt: new Date("2025-05-25T10:00:00Z"),
-    completedAt: null,
-  },
-];
+// Remove initialChores, it will be handled by Firestore
 
 const initialTasks = [
+  // Keep this for now, will be refactored later
   {
     id: 1,
     title: "Replace HVAC Filter",
@@ -59,6 +39,7 @@ const initialTasks = [
 ];
 
 const initialShoppingLists = [
+  // Keep this for now
   {
     id: "groceries",
     name: "Groceries",
@@ -82,9 +63,8 @@ const initialShoppingLists = [
   { id: "hardware", name: "Hardware Store", items: [] },
 ];
 
-// Removed initialCalendarEvents
-
 const initialMealPlan = {
+  // Keep this for now
   [dayjs().format("YYYY-MM-DD")]: [
     { id: Date.now() + 5, type: "Breakfast", description: "Cereal and Fruit" },
     { id: Date.now() + 6, type: "Lunch", description: "Sandwiches" },
@@ -96,6 +76,7 @@ const initialMealPlan = {
 };
 
 const initialNotes = [
+  // Keep this for now
   {
     id: Date.now() + 9,
     title: "Weekend Ideas",
@@ -115,10 +96,11 @@ export default function App() {
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
   const [activeView, setActiveView] = useState("dashboard");
 
-  const [chores, setChores] = useState(() => {
-    const savedChores = localStorage.getItem("familyChores");
-    return savedChores ? JSON.parse(savedChores) : initialChores;
-  });
+  // Chores state will be managed by ChoreList with Firestore,
+  // but App still needs to pass something or ChoreList needs to fetch itself.
+  // For now, App.jsx won't hold chore data directly. ChoreList will fetch its own data.
+  // We can pass setChores if ChoreList needs to update some aggregate data in App, but let's simplify.
+
   const [tasks, setTasks] = useState(() => {
     const savedTasks = localStorage.getItem("familyTasks");
     return savedTasks ? JSON.parse(savedTasks) : initialTasks;
@@ -127,7 +109,6 @@ export default function App() {
     const saved = localStorage.getItem("familyShoppingLists");
     return saved ? JSON.parse(saved) : initialShoppingLists;
   });
-  // Removed calendarEvents state
   const [mealPlan, setMealPlan] = useState(() => {
     const saved = localStorage.getItem("familyMealPlan");
     return saved ? JSON.parse(saved) : initialMealPlan;
@@ -137,16 +118,13 @@ export default function App() {
     return saved ? JSON.parse(saved) : initialNotes;
   });
 
-  useEffect(() => {
-    localStorage.setItem("familyChores", JSON.stringify(chores));
-  }, [chores]);
+  // Remove localStorage for familyChores
   useEffect(() => {
     localStorage.setItem("familyTasks", JSON.stringify(tasks));
   }, [tasks]);
   useEffect(() => {
     localStorage.setItem("familyShoppingLists", JSON.stringify(shoppingLists));
   }, [shoppingLists]);
-  // Removed useEffect for familyCalendarEvents
   useEffect(() => {
     localStorage.setItem("familyMealPlan", JSON.stringify(mealPlan));
   }, [mealPlan]);
@@ -159,7 +137,6 @@ export default function App() {
     { icon: IconListCheck, label: "Chore Tracker", view: "chores" },
     { icon: IconTool, label: "Maintenance", view: "maintenance" },
     { icon: IconShoppingCart, label: "Shopping Lists", view: "shopping" },
-    // { icon: IconCalendarEvent, label: "Family Calendar", view: "calendar" }, // Removed
     { icon: IconToolsKitchen2, label: "Meal Planner", view: "meals" },
     { icon: IconNote, label: "Notes Board", view: "notes" },
   ];
@@ -167,32 +144,31 @@ export default function App() {
   const renderView = () => {
     switch (activeView) {
       case "chores":
-        return <ChoreList chores={chores} setChores={setChores} />;
+        // ChoreList will now fetch and manage its own data from Firestore.
+        // We don't need to pass `chores` or `setChores` from App.jsx for Firestore integration.
+        return <ChoreList />;
       case "maintenance":
-        return <MaintenanceList tasks={tasks} setTasks={setTasks} />;
+        return <MaintenanceList tasks={tasks} setTasks={setTasks} />; // Will refactor later
       case "shopping":
         return (
           <ShoppingList
             shoppingListsData={shoppingLists}
             setShoppingListsData={setShoppingLists}
           />
-        );
-      // case "calendar": // Removed
-      //   return <FamilyCalendar calendarEventsData={calendarEvents} setCalendarEventsData={setCalendarEvents} />;
+        ); // Will refactor later
       case "meals":
         return (
           <MealPlanner mealPlanData={mealPlan} setMealPlanData={setMealPlan} />
-        );
+        ); // Will refactor later
       case "notes":
-        return <NotesBoard notesData={notes} setNotesData={setNotes} />;
+        return <NotesBoard notesData={notes} setNotesData={setNotes} />; // Will refactor later
       case "dashboard":
       default:
         return (
           <Dashboard
-            chores={chores}
+            // chores prop will be removed or handled differently, as ChoreList fetches its own
             tasks={tasks}
             shoppingLists={shoppingLists}
-            // calendarEvents={calendarEvents} // Removed
             mealPlan={mealPlan}
             notes={notes}
           />

@@ -1,5 +1,5 @@
 // src/components/ChoreList.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Button,
   TextInput,
@@ -16,8 +16,9 @@ import {
   Table,
   Avatar,
   Box,
-  MultiSelect, // Added
-  NumberInput, // Added
+  MultiSelect,
+  NumberInput,
+  LoadingOverlay, // For loading state
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -25,10 +26,23 @@ import {
   IconTrash,
   IconPencil,
   IconRepeat,
-} from "@tabler/icons-react"; // Added IconRepeat
+} from "@tabler/icons-react";
 import dayjs from "dayjs";
+import { db } from "../firebase"; // Import your Firebase config
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  Timestamp, // For Firestore Timestamps
+  serverTimestamp, // For server-side timestamps
+} from "firebase/firestore";
 
-const family = ["Alice", "Bob", "Charlie", "Mom", "Dad"];
+const family = ["Alice", "Bob", "Charlie", "Mom", "Dad"]; // Keep for assignment dropdown
 const familyColors = {
   Alice: "pink",
   Bob: "indigo",
@@ -40,11 +54,9 @@ const familyColors = {
 const recurrenceTypes = [
   { value: "daily", label: "Daily" },
   { value: "weekly", label: "Weekly" },
-  // { value: 'monthly', label: 'Monthly' }, // Can add later
 ];
-
 const daysOfWeek = [
-  { value: "0", label: "Sunday" }, // dayjs().day() Sunday is 0
+  { value: "0", label: "Sunday" },
   { value: "1", label: "Monday" },
   { value: "2", label: "Tuesday" },
   { value: "3", label: "Wednesday" },
@@ -53,21 +65,51 @@ const daysOfWeek = [
   { value: "6", label: "Saturday" },
 ];
 
-export default function ChoreList({ chores, setChores }) {
+const CHORES_COLLECTION = "chores"; // Define collection name
+
+export default function ChoreList() {
+  const [chores, setChores] = useState([]); // Local state to hold chores from Firestore
+  const [loading, setLoading] = useState(true); // Loading state
   const [opened, { open, close }] = useDisclosure(false);
-  const [editingChore, setEditingChore] = useState(null);
+  const [editingChore, setEditingChore] = useState(null); // Chore object from Firestore (includes id)
   const [newChore, setNewChore] = useState({
     title: "",
-    assignedTo: "",
+    assignedTo: family[0] || "",
     isRecurring: false,
-    recurrenceType: "daily", // Default recurrence
-    recurrenceInterval: 1, // Default interval (e.g., every 1 day/week)
-    recurrenceDays: [], // For weekly recurrence, stores selected days [ "0", "1", ... "6" ]
+    recurrenceType: "daily",
+    recurrenceInterval: 1,
+    recurrenceDays: [],
   });
+
+  // --- Firestore Data Fetching (Real-time) ---
+  useEffect(() => {
+    setLoading(true);
+    const q = query(
+      collection(db, CHORES_COLLECTION),
+      orderBy("createdAt", "desc")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const choresData = [];
+        querySnapshot.forEach((doc) => {
+          choresData.push({ ...doc.data(), id: doc.id });
+        });
+        setChores(choresData);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching chores: ", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe(); // Cleanup listener on component unmount
+  }, []); // Empty dependency array means this runs once on mount
 
   const handleOpenModal = (choreToEdit = null) => {
     if (choreToEdit) {
-      setEditingChore(choreToEdit);
+      setEditingChore(choreToEdit); // choreToEdit is the full chore object from state
       setNewChore({
         title: choreToEdit.title,
         assignedTo: choreToEdit.assignedTo,
@@ -80,7 +122,7 @@ export default function ChoreList({ chores, setChores }) {
       setEditingChore(null);
       setNewChore({
         title: "",
-        assignedTo: family[0] || "", // Default to first family member
+        assignedTo: family[0] || "",
         isRecurring: false,
         recurrenceType: "daily",
         recurrenceInterval: 1,
@@ -90,75 +132,88 @@ export default function ChoreList({ chores, setChores }) {
     open();
   };
 
-  const handleSubmitChore = () => {
-    const choreData = { ...newChore };
-    if (!choreData.isRecurring) {
-      delete choreData.recurrenceType;
-      delete choreData.recurrenceInterval;
-      delete choreData.recurrenceDays;
-    } else {
-      // Ensure interval is at least 1
-      choreData.recurrenceInterval = Math.max(
+  const handleSubmitChore = async () => {
+    const choreDataPayload = {
+      title: newChore.title,
+      assignedTo: newChore.assignedTo,
+      isRecurring: newChore.isRecurring,
+      // Firestore specific data types / handling
+      done: false, // New chores are not done
+      // completedAt will be set when done
+    };
+
+    if (newChore.isRecurring) {
+      choreDataPayload.recurrenceType = newChore.recurrenceType;
+      choreDataPayload.recurrenceInterval = Math.max(
         1,
-        Number(choreData.recurrenceInterval) || 1
+        Number(newChore.recurrenceInterval) || 1
       );
-      // If not weekly, clear recurrenceDays
-      if (choreData.recurrenceType !== "weekly") {
-        choreData.recurrenceDays = [];
-      }
+      choreDataPayload.recurrenceDays =
+        newChore.recurrenceType === "weekly" ? newChore.recurrenceDays : [];
     }
 
-    if (editingChore) {
-      setChores(
-        chores.map((chore) =>
-          chore.id === editingChore.id ? { ...chore, ...choreData } : chore
-        )
-      );
-    } else {
-      setChores([
-        ...chores,
-        {
-          ...choreData,
-          id: Date.now(),
-          done: false,
-          createdAt: new Date().valueOf(), // Store as timestamp
+    setLoading(true);
+    try {
+      if (editingChore && editingChore.id) {
+        // Update existing chore
+        const choreRef = doc(db, CHORES_COLLECTION, editingChore.id);
+        await updateDoc(choreRef, choreDataPayload); // Don't update createdAt
+      } else {
+        // Add new chore
+        await addDoc(collection(db, CHORES_COLLECTION), {
+          ...choreDataPayload,
+          createdAt: serverTimestamp(), // Use server timestamp for creation
           completedAt: null,
-        },
-      ]);
+        });
+      }
+    } catch (error) {
+      console.error("Error saving chore: ", error);
     }
+    setLoading(false);
     close();
   };
 
-  const toggleDone = (id) => {
-    setChores(
-      chores.map((chore) => {
-        if (chore.id === id) {
-          const isNowDone = !chore.done;
-          if (isNowDone && chore.isRecurring) {
-            // For recurring chores: mark done, then immediately reset for next occurrence
-            return {
-              ...chore,
-              done: false, // Reset for next time
-              completedAt: null, // Reset completedAt (or log this completion elsewhere)
-              // We could add a 'lastCompletedAt' field if we want to track the actual completion
-              // and base the next recurrence on that, but this is simpler for now.
-              // It just becomes available again immediately.
-            };
-          }
-          // For non-recurring, or when unchecking a recurring chore (making it pending)
-          return {
-            ...chore,
-            done: isNowDone,
-            completedAt: isNowDone ? new Date().valueOf() : null,
-          };
+  const toggleDone = async (choreId, currentDoneStatus, isRecurringChore) => {
+    setLoading(true);
+    const choreRef = doc(db, CHORES_COLLECTION, choreId);
+    try {
+      if (isRecurringChore) {
+        if (!currentDoneStatus) {
+          // If marking a recurring chore as done
+          // For recurring: log completion (optional step for full history, not done here yet), then reset
+          await updateDoc(choreRef, {
+            // lastCompletedAt: serverTimestamp(), // Example: if you want to track actual completions
+            done: false, // Reset for next time
+            completedAt: null,
+          });
+        } else {
+          // If unchecking a recurring chore (making it pending from a 'false' state)
+          // This case might need more thought - usually recurring chores go from pending to done, then reset.
+          // For now, this will just make it "not done".
+          await updateDoc(choreRef, { done: false, completedAt: null });
         }
-        return chore;
-      })
-    );
+      } else {
+        // For non-recurring chores
+        await updateDoc(choreRef, {
+          done: !currentDoneStatus,
+          completedAt: !currentDoneStatus ? serverTimestamp() : null,
+        });
+      }
+    } catch (error) {
+      console.error("Error updating chore status: ", error);
+    }
+    setLoading(false);
   };
 
-  const deleteChore = (id) => {
-    setChores(chores.filter((chore) => chore.id !== id));
+  const deleteChore = async (choreId) => {
+    setLoading(true);
+    const choreRef = doc(db, CHORES_COLLECTION, choreId);
+    try {
+      await deleteDoc(choreRef);
+    } catch (error) {
+      console.error("Error deleting chore: ", error);
+    }
+    setLoading(false);
   };
 
   const rows = chores.map((chore) => (
@@ -169,7 +224,7 @@ export default function ChoreList({ chores, setChores }) {
       <Table.Td>
         <Checkbox
           checked={chore.done}
-          onChange={() => toggleDone(chore.id)}
+          onChange={() => toggleDone(chore.id, chore.done, chore.isRecurring)}
           aria-label="Mark as done"
         />
       </Table.Td>
@@ -177,18 +232,17 @@ export default function ChoreList({ chores, setChores }) {
         <Group gap="xs">
           {chore.isRecurring && <IconRepeat size={16} color="gray" />}
           <Text fw={500} strikethrough={chore.done && !chore.isRecurring}>
-            {" "}
-            {/* Only strikethrough non-recurring */}
             {chore.title}
           </Text>
         </Group>
-        {chore.done &&
-          chore.completedAt &&
-          !chore.isRecurring && ( // Show completion only for non-recurring
-            <Text size="xs" c="dimmed">
-              Completed: {dayjs(chore.completedAt).format("MMM D, h:mm A")}
-            </Text>
-          )}
+        {chore.done && chore.completedAt && !chore.isRecurring && (
+          <Text size="xs" c="dimmed">
+            Completed:{" "}
+            {chore.completedAt
+              ? dayjs(chore.completedAt.toDate()).format("MMM D, h:mm A")
+              : "N/A"}
+          </Text>
+        )}
       </Table.Td>
       <Table.Td>
         <Group gap="xs" align="center">
@@ -203,7 +257,7 @@ export default function ChoreList({ chores, setChores }) {
         </Group>
       </Table.Td>
       <Table.Td>
-        {chore.done && !chore.isRecurring ? ( // "Done" status primarily for non-recurring
+        {chore.done && !chore.isRecurring ? (
           <Badge color="green">Done</Badge>
         ) : (
           <Badge color="orange">Pending</Badge>
@@ -233,7 +287,18 @@ export default function ChoreList({ chores, setChores }) {
   ));
 
   return (
-    <Paper shadow="md" p="lg" radius="md" withBorder>
+    <Paper
+      shadow="md"
+      p="lg"
+      radius="md"
+      withBorder
+      style={{ position: "relative" }}
+    >
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        overlayProps={{ radius: "sm", blur: 2 }}
+      />
       <Modal
         opened={opened}
         onClose={close}
@@ -241,6 +306,7 @@ export default function ChoreList({ chores, setChores }) {
         centered
         size="md"
       >
+        {/* Modal content for adding/editing chores remains largely the same as your last version */}
         <Stack>
           <TextInput
             label="Chore Title"
@@ -315,7 +381,12 @@ export default function ChoreList({ chores, setChores }) {
               )}
             </Paper>
           )}
-          <Button onClick={handleSubmitChore} fullWidth mt="md">
+          <Button
+            onClick={handleSubmitChore}
+            fullWidth
+            mt="md"
+            loading={loading}
+          >
             {editingChore ? "Save Changes" : "Add Chore"}
           </Button>
         </Stack>
@@ -336,21 +407,19 @@ export default function ChoreList({ chores, setChores }) {
           <Table striped highlightOnHover verticalSpacing="sm">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th style={{ width: 40 }} />
-                <Table.Th>Title</Table.Th>
-                <Table.Th>Assigned To</Table.Th>
-                <Table.Th>Status</Table.Th>
+                <Table.Th style={{ width: 40 }} /> <Table.Th>Title</Table.Th>
+                <Table.Th>Assigned To</Table.Th> <Table.Th>Status</Table.Th>
                 <Table.Th>Actions</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>{rows}</Table.Tbody>
           </Table>
         </Box>
-      ) : (
+      ) : !loading ? ( // Only show "No chores" if not loading
         <Text c="dimmed" align="center" mt="xl">
           No chores yet. Add some to get started!
         </Text>
-      )}
+      ) : null}
     </Paper>
   );
 }
