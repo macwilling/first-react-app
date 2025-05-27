@@ -1,6 +1,6 @@
 // src/App.jsx
 import { useState, useEffect } from "react";
-import dayjs from "dayjs"; // Keep for other components if they use it
+import dayjs from "dayjs";
 import {
   AppShell,
   Burger,
@@ -17,6 +17,7 @@ import {
   IconShoppingCart,
   IconToolsKitchen2,
   IconNote,
+  IconBook2, // <-- New Icon for Recipe Book
 } from "@tabler/icons-react";
 
 import ChoreList from "./components/ChoreList";
@@ -25,11 +26,10 @@ import Dashboard from "./components/Dashboard";
 import ShoppingList from "./components/ShoppingList";
 import MealPlanner from "./components/MealPlanner";
 import NotesBoard from "./components/NotesBoard";
+import RecipeBookPage from "./components/RecipeBookPage"; // <-- New Component Import
 
-// Remove initialTasks - MaintenanceList will fetch from Firestore
-
+// Keep other initial data for components not yet refactored
 const initialShoppingLists = [
-  // Keep this for now
   {
     id: "groceries",
     name: "Groceries",
@@ -52,47 +52,28 @@ const initialShoppingLists = [
   },
   { id: "hardware", name: "Hardware Store", items: [] },
 ];
-
 const initialMealPlan = {
-  // Keep this for now
   [dayjs().format("YYYY-MM-DD")]: [
     { id: Date.now() + 5, type: "Breakfast", description: "Cereal and Fruit" },
     { id: Date.now() + 6, type: "Lunch", description: "Sandwiches" },
     { id: Date.now() + 7, type: "Dinner", description: "Chicken Stir-fry" },
   ],
-  [dayjs().add(1, "day").format("YYYY-MM-DD")]: [
-    { id: Date.now() + 8, type: "Dinner", description: "Tacos" },
-  ],
 };
-
 const initialNotes = [
-  // Keep this for now
   {
     id: Date.now() + 9,
     title: "Weekend Ideas",
     content: "- Park visit\n- Board games",
     color: "yellow.3",
   },
-  {
-    id: Date.now() + 10,
-    title: "Gift List",
-    content: "Alice: Book\nBob: Art supplies",
-    color: "indigo.3",
-  },
 ];
 
 export default function App() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
-  const [activeView, setActiveView] = useState("dashboard");
+  const [activeView, setActiveView] = useState("dashboard"); // Default to dashboard
 
-  // Remove `tasks` state - MaintenanceList will manage its own via Firestore
-  // const [tasks, setTasks] = useState(() => {
-  //   const savedTasks = localStorage.getItem("familyTasks");
-  //   return savedTasks ? JSON.parse(savedTasks) : initialTasks;
-  // });
-
-  // Keep other states that are still client-side for now
+  // States for components still using localStorage
   const [shoppingLists, setShoppingLists] = useState(() => {
     const saved = localStorage.getItem("familyShoppingLists");
     return saved ? JSON.parse(saved) : initialShoppingLists;
@@ -105,11 +86,6 @@ export default function App() {
     const saved = localStorage.getItem("familyNotes");
     return saved ? JSON.parse(saved) : initialNotes;
   });
-
-  // Remove localStorage for familyTasks
-  // useEffect(() => {
-  //   localStorage.setItem("familyTasks", JSON.stringify(tasks));
-  // }, [tasks]);
 
   useEffect(() => {
     localStorage.setItem("familyShoppingLists", JSON.stringify(shoppingLists));
@@ -125,36 +101,37 @@ export default function App() {
     { icon: IconHome, label: "Dashboard", view: "dashboard" },
     { icon: IconListCheck, label: "Chore Tracker", view: "chores" },
     { icon: IconTool, label: "Maintenance", view: "maintenance" },
-    { icon: IconShoppingCart, label: "Shopping Lists", view: "shopping" },
+    { icon: IconBook2, label: "Recipe Book", view: "recipes" }, // <-- New NavLink
     { icon: IconToolsKitchen2, label: "Meal Planner", view: "meals" },
+    { icon: IconShoppingCart, label: "Shopping Lists", view: "shopping" },
     { icon: IconNote, label: "Notes Board", view: "notes" },
   ];
 
   const renderView = () => {
     switch (activeView) {
       case "chores":
-        return <ChoreList />; // Already refactored
+        return <ChoreList />;
       case "maintenance":
-        // MaintenanceList will now fetch and manage its own data from Firestore.
         return <MaintenanceList />;
+      case "recipes": // <-- New Case
+        return <RecipeBookPage />;
+      case "meals":
+        return (
+          <MealPlanner mealPlanData={mealPlan} setMealPlanData={setMealPlan} />
+        ); // Will be refactored
       case "shopping":
         return (
           <ShoppingList
             shoppingListsData={shoppingLists}
             setShoppingListsData={setShoppingLists}
           />
-        );
-      case "meals":
-        return (
-          <MealPlanner mealPlanData={mealPlan} setMealPlanData={setMealPlan} />
-        );
+        ); // Will be refactored
       case "notes":
-        return <NotesBoard notesData={notes} setNotesData={setNotes} />;
+        return <NotesBoard notesData={notes} setNotesData={setNotes} />; // Will be refactored
       case "dashboard":
       default:
         return (
           <Dashboard
-            // tasks prop will be removed or handled differently by Dashboard later
             shoppingLists={shoppingLists}
             mealPlan={mealPlan}
             notes={notes}
