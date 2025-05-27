@@ -26,6 +26,7 @@ import {
   IconPencil,
   IconRefreshDot,
   IconRepeat,
+  IconCheck, // Added for marking non-recurring as done
 } from "@tabler/icons-react";
 
 const recurrenceTypes = [
@@ -95,16 +96,18 @@ export default function MaintenanceList({ tasks, setTasks }) {
     setTasks(tasks.filter((task) => task.id !== id));
   };
 
-  // Updated to calculate from today's date
+  // Renamed for clarity, as it's effectively deleting the task
+  const markNonRecurringAsDone = (id) => {
+    setTasks(tasks.filter((task) => task.id !== id));
+  };
+
   const calculateNextDueDateFromToday = (interval, type) => {
     return dayjs().add(interval, type).valueOf();
   };
 
   const handleCompleteAndReschedule = (taskToReschedule) => {
     if (taskToReschedule.isRecurring) {
-      // No longer checking if taskToReschedule.dueDate exists
       const nextDueDate = calculateNextDueDateFromToday(
-        // Using new function
         taskToReschedule.recurrenceInterval,
         taskToReschedule.recurrenceType
       );
@@ -167,8 +170,7 @@ export default function MaintenanceList({ tasks, setTasks }) {
         </Table.Td>
         <Table.Td>
           <Group gap="xs">
-            {/* Show for ALL recurring tasks */}
-            {task.isRecurring && (
+            {task.isRecurring ? (
               <ActionIcon
                 variant="light"
                 color="green"
@@ -177,11 +179,22 @@ export default function MaintenanceList({ tasks, setTasks }) {
               >
                 <IconRefreshDot size={16} />
               </ActionIcon>
+            ) : (
+              // "Mark as Done" button for non-recurring tasks
+              <ActionIcon
+                variant="light"
+                color="green"
+                onClick={() => markNonRecurringAsDone(task.id)}
+                title="Mark as Done"
+              >
+                <IconCheck size={16} />
+              </ActionIcon>
             )}
             <ActionIcon
               variant="light"
               color="blue"
               onClick={() => handleOpenModal(task)}
+              title="Edit Task"
             >
               <IconPencil size={16} />
             </ActionIcon>
@@ -189,6 +202,7 @@ export default function MaintenanceList({ tasks, setTasks }) {
               variant="light"
               color="red"
               onClick={() => deleteTask(task.id)}
+              title="Delete Task"
             >
               <IconTrash size={16} />
             </ActionIcon>
@@ -274,7 +288,6 @@ export default function MaintenanceList({ tasks, setTasks }) {
         </Button>
       </Group>
 
-      {/* Table for tasks - no changes here from previous version with recurrence */}
       {tasks.length > 0 ? (
         <Box style={{ overflowX: "auto" }}>
           <Table striped highlightOnHover verticalSpacing="sm">
