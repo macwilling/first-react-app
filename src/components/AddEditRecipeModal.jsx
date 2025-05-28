@@ -15,17 +15,15 @@ import {
   MultiSelect,
   Alert,
   Collapse,
-  Tooltip,
-  SegmentedControl, // For switching between paste & structured ingredients
+  SegmentedControl,
 } from "@mantine/core";
-import { useForm, zodResolver } from "@mantine/form"; // For robust validation
-import { z } from "zod"; // For schema validation
+import { useForm, zodResolver } from "@mantine/form";
+import { z } from "zod";
 import {
   IconPlus,
   IconTrash,
   IconInfoCircle,
   IconSparkles,
-  IconClipboardText,
 } from "@tabler/icons-react";
 import { db } from "../firebase";
 import {
@@ -36,9 +34,9 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { nanoid } from "nanoid"; // For generating unique IDs for ingredients
+import { nanoid } from "nanoid";
 
-// --- Ingredient Parsing Logic (from previous discussion, can be moved to a util file) ---
+// --- Ingredient Parsing Logic ---
 const COMMON_UNITS = [
   "cup",
   "cups",
@@ -117,27 +115,48 @@ const COMMON_UNITS = [
   "bars",
   "piece",
   "pieces",
-  // Add more units, consider those that might be part of a name like "large", "medium", "small"
 ];
 const SORTED_COMMON_UNITS = COMMON_UNITS.sort((a, b) => b.length - a.length);
 const unitRegexFragment = SORTED_COMMON_UNITS.map((unit) =>
   unit.replace(/\s/g, "\\s*")
 ).join("|");
+
+function normalizeUnicodeFractions(text) {
+  if (!text) return "";
+  return text
+    .replace(/\u00BD/g, "1/2")
+    .replace(/\u00BC/g, "1/4")
+    .replace(/\u00BE/g, "3/4")
+    .replace(/\u2153/g, "1/3")
+    .replace(/\u2154/g, "2/3")
+    .replace(/\u2155/g, "1/5")
+    .replace(/\u2156/g, "2/5")
+    .replace(/\u2157/g, "3/5")
+    .replace(/\u2158/g, "4/5")
+    .replace(/\u2159/g, "1/6")
+    .replace(/\u215A/g, "5/6")
+    .replace(/\u215B/g, "1/8")
+    .replace(/\u215C/g, "3/8")
+    .replace(/\u215D/g, "5/8")
+    .replace(/\u215E/g, "7/8");
+}
+
 const quantityRegex = /^(\d+\s+\d\/\d|\d+-\d\/\d|\d+\/\d+|\d*\.\d+|\d+)\s*/;
 
 function parseSingleIngredientLine(line) {
-  line = line.trim();
-  if (!line) return null;
+  const originalLine = line.trim();
+  if (!originalLine) return null;
+  let normalizedLine = normalizeUnicodeFractions(originalLine);
 
   let quantity = "";
   let unit = "";
-  let name = line;
-  let processingLine = line;
-  let parseQuality = "poor"; // 'good', 'partial' (qty+name), 'poor' (only name)
+  let name = normalizedLine;
+  let processingLine = normalizedLine;
+  let parseQuality = "poor";
 
   const quantityMatch = processingLine.match(quantityRegex);
-  if (quantityMatch) {
-    quantity = quantityMatch[1].trim();
+  if (quantityMatch && quantityMatch[0]) {
+    quantity = quantityMatch[0].trim();
     processingLine = processingLine.substring(quantityMatch[0].length).trim();
     parseQuality = "partial";
   }
@@ -145,12 +164,11 @@ function parseSingleIngredientLine(line) {
   const unitMatchRegex = new RegExp(
     `^(${unitRegexFragment})(?:\\b|\\s|s\\b|s\\s)(.*)$`,
     "i"
-  ); // Added plural 's' handling
+  );
   const unitMatch = processingLine.match(unitMatchRegex);
 
   if (unitMatch && unitMatch[1]) {
     unit = unitMatch[1].trim().toLowerCase();
-    // Normalize units (e.g., "cups" to "cup")
     const unitMappings = {
       cups: "cup",
       ounces: "oz",
@@ -169,23 +187,24 @@ function parseSingleIngredientLine(line) {
   } else {
     name = processingLine;
   }
+
   name = name
     .replace(/^of\s+/i, "")
     .replace(/,$/, "")
     .trim();
   if (name.length === 0 && quantity && unit) {
-    // If name becomes empty but we have qty/unit, move unit to name
     name = unit;
     unit = "";
   }
-  if (!name && !quantity && !unit && line) name = line; // If all else fails, name is the original line
+  if (!name && (quantity || unit)) name = processingLine;
+  else if (!name && !quantity && !unit && originalLine) name = originalLine;
 
   return {
     id: nanoid(8),
     quantity,
     unit,
     name,
-    originalPastedLine: line,
+    originalPastedLine: originalLine,
     parseQuality,
   };
 }
@@ -194,12 +213,11 @@ export function parsePastedIngredients(textBlock) {
   if (!textBlock || !textBlock.trim()) return [];
   return textBlock
     .split("\n")
-    .map((line) => parseSingleIngredientLine(line.trim()))
+    .map((line) => parseSingleIngredientLine(line))
     .filter((ing) => ing && (ing.name || ing.quantity || ing.unit));
 }
 // --- End of Ingredient Parsing Logic ---
 
-// Zod schema for validation
 const recipeSchema = z.object({
   title: z.string().min(1, { message: "Recipe title is required" }),
   sourceURL: z
@@ -212,7 +230,7 @@ const recipeSchema = z.object({
   prepTime: z.string().optional(),
   cookTime: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  pastedIngredients: z.string().optional(), // For the textarea
+  pastedIngredients: z.string().optional(),
   ingredients: z
     .array(
       z.object({
@@ -225,7 +243,7 @@ const recipeSchema = z.object({
       })
     )
     .min(1, { message: "At least one ingredient is required" }),
-  pastedInstructions: z.string().optional(), // For the textarea
+  pastedInstructions: z.string().optional(),
   instructions: z
     .array(z.string().min(1, { message: "Instruction step cannot be empty" }))
     .min(1, { message: "At least one instruction step is required" }),
@@ -235,8 +253,9 @@ const recipeSchema = z.object({
 const RECIPES_COLLECTION = "recipes";
 
 export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
-  const [isProcessingIngredients, setIsProcessingIngredients] = useState(false);
-  const [ingredientEntryMode, setIngredientEntryMode] = useState("paste"); // 'paste' or 'structured'
+  const [isProcessingIngredientsButton, setIsProcessingIngredientsButton] =
+    useState(false);
+  const [ingredientEntryMode, setIngredientEntryMode] = useState("paste");
 
   const form = useForm({
     initialValues: {
@@ -257,40 +276,50 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
   });
 
   useEffect(() => {
-    if (recipeToEdit) {
-      form.setValues({
-        ...recipeToEdit,
-        tags: recipeToEdit.tags || [],
-        ingredients: recipeToEdit.ingredients || [], // Should be structured
-        instructions: recipeToEdit.instructions || [], // Should be array of strings
-        pastedIngredients:
-          recipeToEdit.ingredients
-            ?.map(
-              (ing) =>
-                ing.originalPastedLine ||
-                `${ing.quantity || ""} ${ing.unit || ""} ${
-                  ing.name || ""
-                }`.trim()
-            )
-            .join("\n") || "",
-        pastedInstructions: recipeToEdit.instructions?.join("\n") || "",
-      });
-      // If loading an existing recipe with structured ingredients, switch to structured view
-      if (recipeToEdit.ingredients && recipeToEdit.ingredients.length > 0) {
-        setIngredientEntryMode("structured");
+    if (opened) {
+      if (recipeToEdit) {
+        form.setValues({
+          title: recipeToEdit.title || "",
+          sourceURL: recipeToEdit.sourceURL || "",
+          description: recipeToEdit.description || "",
+          servings: recipeToEdit.servings || "",
+          prepTime: recipeToEdit.prepTime || "",
+          cookTime: recipeToEdit.cookTime || "",
+          tags: recipeToEdit.tags || [],
+          ingredients: recipeToEdit.ingredients || [],
+          instructions: recipeToEdit.instructions || [],
+          pastedIngredients:
+            recipeToEdit.ingredients
+              ?.map(
+                (ing) =>
+                  ing.originalPastedLine ||
+                  `${ing.quantity || ""} ${ing.unit || ""} ${
+                    ing.name || ""
+                  }`.trim()
+              )
+              .join("\n") || "",
+          pastedInstructions: recipeToEdit.instructions?.join("\n") || "",
+          notes: recipeToEdit.notes || "",
+        });
+        if (recipeToEdit.ingredients && recipeToEdit.ingredients.length > 0) {
+          setIngredientEntryMode("structured");
+        } else {
+          setIngredientEntryMode("paste");
+        }
       } else {
+        form.reset();
         setIngredientEntryMode("paste");
       }
-    } else {
-      form.reset();
-      setIngredientEntryMode("paste");
     }
-  }, [recipeToEdit, opened]); // Re-initialize form when modal opens or recipeToEdit changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recipeToEdit, opened]);
 
   const handleProcessPastedIngredients = () => {
+    setIsProcessingIngredientsButton(true);
     const processed = parsePastedIngredients(form.values.pastedIngredients);
     form.setFieldValue("ingredients", processed);
-    setIngredientEntryMode("structured"); // Switch to structured view for editing
+    setIngredientEntryMode("structured");
+    setIsProcessingIngredientsButton(false);
   };
 
   const handleAddIngredientRow = () => {
@@ -310,13 +339,20 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
       .map((s) => s.trim())
       .filter((s) => s);
     form.setFieldValue("instructions", steps);
-    // Could also switch to a view of listed steps, but for now, direct save is okay
   };
 
   const handleSubmit = async (values) => {
-    setIsProcessingIngredients(true); // Show loading on save button
+    // --- START DIAGNOSTIC LOGS ---
+    console.log(
+      "handleSubmit: values received from form.onSubmit:",
+      JSON.stringify(values, null, 2)
+    );
+    console.log(
+      "handleSubmit: values.tags specifically:",
+      JSON.stringify(values.tags, null, 2)
+    );
+    // --- END DIAGNOSTIC LOGS ---
 
-    // Ensure instructions are processed if still in paste mode
     let finalInstructions = values.instructions;
     if (
       values.pastedInstructions &&
@@ -327,46 +363,71 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
         .map((s) => s.trim())
         .filter((s) => s);
     }
-    // Ensure ingredients are structured
+    if (finalInstructions.length === 0 && values.pastedInstructions) {
+      finalInstructions = values.pastedInstructions
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s);
+      form.setFieldValue("instructions", finalInstructions);
+    }
+
     let finalIngredients = values.ingredients;
     if (ingredientEntryMode === "paste" && values.pastedIngredients) {
       finalIngredients = parsePastedIngredients(values.pastedIngredients);
+      form.setFieldValue("ingredients", finalIngredients);
     }
 
-    const recipePayload = {
-      title: values.title,
-      sourceURL: values.sourceURL,
-      description: values.description,
-      servings: values.servings,
-      prepTime: values.prepTime,
-      cookTime: values.cookTime,
-      tags: values.tags || [],
-      ingredients: finalIngredients.map(
-        ({ id, parseQuality, originalPastedLine, ...ing }) => ing
-      ), // Remove transient fields
+    const formStateForValidation = {
+      ...values,
       instructions: finalInstructions,
-      notes: values.notes,
+      ingredients: finalIngredients,
     };
+    const validationResult = form.validate(formStateForValidation);
 
-    try {
-      if (recipeToEdit && recipeToEdit.id) {
-        await updateDoc(
-          doc(db, RECIPES_COLLECTION, recipeToEdit.id),
-          recipePayload
-        );
-      } else {
-        await addDoc(collection(db, RECIPES_COLLECTION), {
-          ...recipePayload,
-          createdAt: serverTimestamp(),
-        });
+    if (!validationResult.hasErrors) {
+      const recipePayload = {
+        title: values.title,
+        sourceURL: values.sourceURL,
+        description: values.description,
+        servings: values.servings,
+        prepTime: values.prepTime,
+        cookTime: values.cookTime,
+        tags: values.tags || [],
+        ingredients: finalIngredients.map(
+          ({ id, parseQuality, originalPastedLine, ...ing }) => ing
+        ),
+        instructions: finalInstructions,
+        notes: values.notes,
+      };
+
+      // --- START DIAGNOSTIC LOG ---
+      console.log(
+        "handleSubmit: recipePayload being sent to Firestore:",
+        JSON.stringify(recipePayload, null, 2)
+      );
+      // --- END DIAGNOSTIC LOG ---
+
+      try {
+        if (recipeToEdit && recipeToEdit.id) {
+          await updateDoc(
+            doc(db, RECIPES_COLLECTION, recipeToEdit.id),
+            recipePayload
+          );
+        } else {
+          await addDoc(collection(db, RECIPES_COLLECTION), {
+            ...recipePayload,
+            createdAt: serverTimestamp(),
+          });
+        }
+        onClose();
+        form.reset();
+      } catch (error) {
+        console.error("Error saving recipe:", error);
+        form.setErrors({ submit: "Failed to save recipe. Please try again." });
       }
-      onClose(); // Close modal on success
-      form.reset();
-    } catch (error) {
-      console.error("Error saving recipe:", error);
-      form.setErrors({ submit: "Failed to save recipe. Please try again." }); // Example of form-level error
+    } else {
+      console.log("Form validation errors before submit:", form.errors);
     }
-    setIsProcessingIngredients(false);
   };
 
   return (
@@ -379,7 +440,6 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
       title={recipeToEdit ? "Edit Recipe" : "Add New Recipe"}
       size="xl"
       overlayProps={{ blur: 2 }}
-      // closeOnClickOutside={false} // Optional: prevent closing on click outside if form is complex
     >
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
@@ -418,16 +478,18 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
               {...form.getInputProps("cookTime")}
             />
           </Group>
+
+          {/* This is the MultiSelect configuration from your "Test 2" that allowed selection but failed on save */}
           <MultiSelect
-            data={[]} // Provide an empty array for suggestions
             label="Tags (Optional)"
-            placeholder="e.g., dessert, quick, vegan"
+            placeholder="Select tags"
+            data={["Sample Tag A", "Sample Tag B", "Sample Tag C"]} // Hardcoded data for this specific test
             searchable
-            creatable
-            getCreateLabel={(query) => `+ Add tag: ${query}`}
+            // creatable={false} // creatable is removed for this test
+            // getCreateLabel={(query) => `+ Add tag: ${query}`} // getCreateLabel is removed for this test
             {...form.getInputProps("tags")}
           />
-          {/* Instructions Input */}
+
           <Paper withBorder p="sm" radius="sm">
             <Title order={5} mb="xs">
               Instructions
@@ -437,14 +499,13 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
               minRows={5}
               autosize
               {...form.getInputProps("pastedInstructions")}
-              onBlur={handleProcessPastedInstructions} // Process when user tabs out
+              onBlur={handleProcessPastedInstructions}
             />
             {form.errors.instructions && (
               <Text c="red" size="xs" mt="xs">
                 {form.errors.instructions}
               </Text>
             )}
-            {/* Optionally, display processed steps for confirmation */}
             {form.values.instructions.length > 0 &&
               form.values.pastedInstructions && (
                 <Button
@@ -458,7 +519,6 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
               )}
           </Paper>
 
-          {/* Ingredients Input */}
           <Paper withBorder p="sm" radius="sm">
             <Group justify="space-between" align="center" mb="xs">
               <Title order={5}>Ingredients</Title>
@@ -472,7 +532,6 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
                 ]}
               />
             </Group>
-
             {ingredientEntryMode === "paste" && (
               <>
                 <Textarea
@@ -486,12 +545,12 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
                   leftSection={<IconSparkles size={16} />}
                   mt="sm"
                   variant="light"
+                  loading={isProcessingIngredientsButton}
                 >
                   Process & Edit Ingredients
                 </Button>
               </>
             )}
-
             <Collapse in={ingredientEntryMode === "structured"}>
               <Stack gap="xs" mt="sm">
                 {form.values.ingredients.map((ing, index) => (
@@ -518,7 +577,7 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
                       <Select
                         label="Unit"
                         data={COMMON_UNITS.map((u) => ({ value: u, label: u }))}
-                        placeholder="cup, g, tbsp"
+                        placeholder="cup, g"
                         searchable
                         creatable
                         getCreateLabel={(query) => `+ Add "${query}"`}
@@ -528,7 +587,7 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
                       />
                       <TextInput
                         label="Name"
-                        placeholder="flour, sugar, chicken breast"
+                        placeholder="flour, sugar"
                         required
                         {...form.getInputProps(`ingredients.${index}.name`)}
                         error={form.errors[`ingredients.${index}.name`]}
@@ -578,13 +637,11 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
             minRows={3}
             {...form.getInputProps("notes")}
           />
-
           {form.errors.submit && (
             <Alert color="red" title="Save Error" icon={<IconInfoCircle />}>
               {form.errors.submit}
             </Alert>
           )}
-
           <Group justify="flex-end" mt="md">
             <Button
               variant="default"
@@ -595,7 +652,7 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
             >
               Cancel
             </Button>
-            <Button type="submit" loading={isProcessingIngredients}>
+            <Button type="submit" loading={form.isSubmitting}>
               {recipeToEdit ? "Save Changes" : "Add Recipe"}
             </Button>
           </Group>

@@ -19,7 +19,6 @@ import {
   IconDotsVertical,
   IconPencil,
   IconTrash,
-  IconBook2,
 } from "@tabler/icons-react";
 import { db } from "../firebase";
 import {
@@ -30,7 +29,7 @@ import {
   deleteDoc,
   doc,
 } from "firebase/firestore";
-import AddEditRecipeModal from "./AddEditRecipeModal"; // We'll create this next
+import AddEditRecipeModal from "./AddEditRecipeModal";
 
 const RECIPES_COLLECTION = "recipes";
 
@@ -39,7 +38,7 @@ export default function RecipeBookPage() {
   const [loading, setLoading] = useState(true);
   const [modalOpened, { open: openModal, close: closeModal }] =
     useDisclosure(false);
-  const [editingRecipe, setEditingRecipe] = useState(null); // This will be the recipe object to edit
+  const [editingRecipe, setEditingRecipe] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -66,7 +65,7 @@ export default function RecipeBookPage() {
   }, []);
 
   const handleAddNewRecipe = () => {
-    setEditingRecipe(null); // Ensure we are not editing
+    setEditingRecipe(null);
     openModal();
   };
 
@@ -76,7 +75,11 @@ export default function RecipeBookPage() {
   };
 
   const handleDeleteRecipe = async (recipeId) => {
-    if (window.confirm("Are you sure you want to delete this recipe?")) {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this recipe? This action cannot be undone."
+      )
+    ) {
       setLoading(true);
       try {
         await deleteDoc(doc(db, RECIPES_COLLECTION, recipeId));
@@ -102,9 +105,12 @@ export default function RecipeBookPage() {
       />
       <AddEditRecipeModal
         opened={modalOpened}
-        onClose={closeModal}
+        onClose={() => {
+          closeModal();
+          setEditingRecipe(null);
+        }}
         recipeToEdit={editingRecipe}
-        // key={editingRecipe ? editingRecipe.id : 'new'} // Re-mount modal if recipe changes
+        key={editingRecipe ? `edit-${editingRecipe.id}` : "add-new-recipe"}
       />
 
       <Group justify="space-between" mb="xl">
@@ -119,69 +125,93 @@ export default function RecipeBookPage() {
 
       {recipes.length > 0 ? (
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-          {recipes.map((recipe) => (
-            <Card
-              key={recipe.id}
-              shadow="sm"
-              padding="lg"
-              radius="md"
-              withBorder
-            >
-              <Group justify="space-between" mb="xs">
-                <Title order={4} truncate>
-                  {recipe.title || "Untitled Recipe"}
-                </Title>
-                <Menu shadow="md" width={200}>
-                  <Menu.Target>
-                    <ActionIcon variant="subtle" color="gray">
-                      <IconDotsVertical size={16} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    <Menu.Item
-                      leftSection={<IconPencil size={14} />}
-                      onClick={() => handleEditRecipe(recipe)}
-                    >
-                      Edit
-                    </Menu.Item>
-                    <Menu.Item
-                      color="red"
-                      leftSection={<IconTrash size={14} />}
-                      onClick={() => handleDeleteRecipe(recipe.id)}
-                    >
-                      Delete
-                    </Menu.Item>
-                  </Menu.Dropdown>
-                </Menu>
-              </Group>
-              {recipe.description && (
-                <Text size="sm" c="dimmed" lineClamp={3}>
-                  {recipe.description}
-                </Text>
-              )}
-              {recipe.tags && recipe.tags.length > 0 && (
-                <Group gap="xs" mt="sm">
-                  {recipe.tags.slice(0, 3).map((tag) => (
-                    <Badge key={tag} variant="light" size="sm">
-                      {tag}
-                    </Badge>
-                  ))}
-                  {recipe.tags.length > 3 && (
-                    <Badge variant="transparent" size="sm">
-                      ...
-                    </Badge>
-                  )}
+          {recipes.map((recipe) => {
+            // // Diagnostic logging for tags (can be removed once tag issues are fully resolved)
+            // if (recipe.tags && recipe.tags.length > 0) {
+            //   console.log(`Rendering tags for recipe "${recipe.title}":`, recipe.tags);
+            //   recipe.tags.forEach((tag, index) => {
+            //     console.log(`  Tag ${index}:`, tag, `(type: ${typeof tag})`);
+            //   });
+            // }
+
+            return (
+              <Card
+                key={recipe.id}
+                shadow="sm"
+                padding="lg"
+                radius="md"
+                withBorder
+              >
+                <Group justify="space-between" mb="xs">
+                  <Title order={4} truncate="true">
+                    {" "}
+                    {/* CORRECTED: truncate="true" */}
+                    {recipe.title || "Untitled Recipe"}
+                  </Title>
+                  <Menu
+                    shadow="md"
+                    width={200}
+                    withinPortal
+                    position="bottom-end"
+                  >
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        aria-label="Recipe options"
+                      >
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        leftSection={<IconPencil size={14} />}
+                        onClick={() => handleEditRecipe(recipe)}
+                      >
+                        Edit
+                      </Menu.Item>
+                      <Menu.Item
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={() => handleDeleteRecipe(recipe.id)}
+                      >
+                        Delete
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
                 </Group>
-              )}
-              <Text size="xs" c="dimmed" mt="md">
-                {recipe.servings && `Serves: ${recipe.servings}`}
-                {(recipe.prepTime || recipe.cookTime) && ` | `}
-                {recipe.prepTime && `Prep: ${recipe.prepTime}`}
-                {recipe.cookTime && ` | Cook: ${recipe.cookTime}`}
-              </Text>
-              {/* We can add a button/link here to view full recipe details later */}
-            </Card>
-          ))}
+
+                {recipe.description && (
+                  <Text size="sm" c="dimmed" lineClamp={3} mt="xs">
+                    {recipe.description}
+                  </Text>
+                )}
+
+                {/* Tag rendering removed as per your request to simplify and move past tag errors */}
+                {/* {recipe.tags && Array.isArray(recipe.tags) && recipe.tags.length > 0 && (
+                  <Group gap="xs" mt="sm">
+                    {recipe.tags.slice(0, 5).map((tag, index) => {
+                      if (typeof tag === 'string' || typeof tag === 'number') {
+                        return <Badge key={`${recipe.id}-tag-${String(tag)}-${index}`} variant="light" size="sm">{String(tag)}</Badge>;
+                      }
+                      console.warn(`Skipping non-string/non-number tag for recipe "${recipe.title || 'Untitled'}":`, tag);
+                      return null;
+                    })}
+                    {recipe.tags.length > 5 && <Badge variant="transparent" size="sm" color="gray">...</Badge>}
+                  </Group>
+                )} */}
+
+                <Text size="xs" c="dimmed" mt="md">
+                  {recipe.servings && `Serves: ${recipe.servings}`}
+                  {(recipe.prepTime || recipe.cookTime) &&
+                    (recipe.servings ? ` | ` : ``)}
+                  {recipe.prepTime && `Prep: ${recipe.prepTime}`}
+                  {recipe.cookTime && recipe.prepTime && ` | `}
+                  {recipe.cookTime && `Cook: ${recipe.cookTime}`}
+                </Text>
+              </Card>
+            );
+          })}
         </SimpleGrid>
       ) : !loading ? (
         <Text c="dimmed" align="center" mt="xl">
