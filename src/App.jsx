@@ -190,8 +190,7 @@ export default function App() {
           ))}
         </AppShell.Section>
       </AppShell.Navbar>
-
-      <AppShell.Main>{renderView()}</AppShell.Main>
+      <AppShell.Main> {renderView()}</AppShell.Main>
     </AppShell>
   );
 }
