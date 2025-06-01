@@ -24,7 +24,7 @@ import {
   IconPencil,
   IconAlertCircle,
 } from "@tabler/icons-react";
-import { db } from "../firebase"; // Your Firebase config
+import { db } from "../firebase";
 import {
   collection,
   query,
@@ -36,8 +36,9 @@ import {
   deleteDoc,
   serverTimestamp,
 } from "firebase/firestore";
+import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
 
-const NOTES_COLLECTION = "notes";
+// const NOTES_COLLECTION = "notes"; // Will be nested
 
 const MANTINE_COLORS = [
   "var(--mantine-color-gray-3)",
@@ -56,23 +57,30 @@ const MANTINE_COLORS = [
 ];
 
 export default function NotesBoard() {
+  const { familyId } = useAuth();
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const [opened, { open, close }] = useDisclosure(false);
-  const [editingNote, setEditingNote] = useState(null); // Full note object for editing
+  const [editingNote, setEditingNote] = useState(null);
   const [newNote, setNewNote] = useState({
     title: "",
     content: "",
     color: MANTINE_COLORS[0],
   });
 
-  // Fetch Notes from Firestore
   useEffect(() => {
+    if (!familyId) {
+      setLoading(false);
+      setNotes([]);
+      return;
+    }
     setLoading(true);
+    setError(null);
+    const notesCollectionPath = `families/${familyId}/notes`;
     const q = query(
-      collection(db, NOTES_COLLECTION),
+      collection(db, notesCollectionPath),
       orderBy("createdAt", "desc")
     );
 
@@ -87,13 +95,13 @@ export default function NotesBoard() {
         setLoading(false);
       },
       (err) => {
-        console.error("Error fetching notes: ", err);
+        console.error(`Error fetching notes for family ${familyId}: `, err);
         setError("Failed to load notes.");
         setLoading(false);
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [familyId]);
 
   const handleOpenModal = (noteToEdit = null) => {
     if (noteToEdit) {
@@ -116,12 +124,17 @@ export default function NotesBoard() {
   };
 
   const handleSubmitNote = async () => {
+    if (!familyId) {
+      setError("Cannot save note: No family selected.");
+      return;
+    }
     if (!newNote.title.trim() && !newNote.content.trim()) {
       setError("Note title or content cannot be empty.");
       return;
     }
     setLoading(true);
     setError(null);
+    const notesCollectionPath = `families/${familyId}/notes`;
     const notePayload = {
       title: newNote.title,
       content: newNote.content,
@@ -130,10 +143,10 @@ export default function NotesBoard() {
 
     try {
       if (editingNote) {
-        const noteRef = doc(db, NOTES_COLLECTION, editingNote.id);
+        const noteRef = doc(db, notesCollectionPath, editingNote.id);
         await updateDoc(noteRef, notePayload);
       } else {
-        await addDoc(collection(db, NOTES_COLLECTION), {
+        await addDoc(collection(db, notesCollectionPath), {
           ...notePayload,
           createdAt: serverTimestamp(),
         });
@@ -147,11 +160,16 @@ export default function NotesBoard() {
   };
 
   const deleteNote = async (noteId) => {
+    if (!familyId) {
+      setError("Cannot delete note: No family selected.");
+      return;
+    }
     if (window.confirm("Are you sure you want to delete this note?")) {
       setLoading(true);
       setError(null);
+      const noteDocPath = `families/${familyId}/notes/${noteId}`;
       try {
-        await deleteDoc(doc(db, NOTES_COLLECTION, noteId));
+        await deleteDoc(doc(db, noteDocPath));
       } catch (err) {
         console.error("Error deleting note: ", err);
         setError("Failed to delete note.");
@@ -159,6 +177,14 @@ export default function NotesBoard() {
       setLoading(false);
     }
   };
+
+  if (!familyId && !loading) {
+    return (
+      <Paper p="lg" withBorder>
+        <Text>Please create or join a family to use the notes board.</Text>
+      </Paper>
+    );
+  }
 
   return (
     <Paper
@@ -233,6 +259,7 @@ export default function NotesBoard() {
         <Button
           onClick={() => handleOpenModal()}
           leftSection={<IconPlus size={18} />}
+          disabled={!familyId || loading}
         >
           New Note
         </Button>
@@ -285,9 +312,9 @@ export default function NotesBoard() {
             </Card>
           ))}
         </SimpleGrid>
-      ) : !loading ? (
+      ) : !loading && familyId ? (
         <Text c="dimmed" ta="center" mt="xl">
-          No notes yet. Add some to get started!
+          No notes yet for this family. Add some to get started!
         </Text>
       ) : null}
     </Paper>

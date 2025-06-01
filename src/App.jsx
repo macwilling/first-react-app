@@ -1,8 +1,5 @@
 // src/App.jsx
-import React, {
-  useState, // No longer need useEffect for localStorage here
-} from "react";
-// import dayjs from "dayjs"; // Not directly used here anymore
+import React, { useState } from "react";
 import {
   AppShell,
   Burger,
@@ -15,6 +12,8 @@ import {
   Avatar,
   UnstyledButton,
   Divider,
+  Button, // For Sign Out
+  LoadingOverlay, // For auth loading
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -26,20 +25,27 @@ import {
   IconNote,
   IconBook2,
   IconSettings,
+  IconLogout,
 } from "@tabler/icons-react";
+import { useAuth } from "./contexts/AuthContext"; // Import useAuth
+import { auth } from "./firebase"; // For signOut
+import { signOut } from "firebase/auth";
 
 const appVersion = import.meta.env.VITE_APP_VERSION || "0.0.0";
 
+// Auth Pages (Import actual components)
+import SignInPage from "./components/auth/SignInPage";
+import SignUpPage from "./components/auth/SignUpPage";
+import FamilyOnboardingPage from "./components/auth/FamilyOnboardingPage";
+
+// Main App Components
 import ChoreList from "./components/ChoreList";
 import MaintenanceList from "./components/MaintenanceList";
 import Dashboard from "./components/Dashboard";
-import ShoppingList from "./components/ShoppingList"; // Will manage its own data
+import ShoppingList from "./components/ShoppingList";
 import MealPlanner from "./components/MealPlanner";
-import NotesBoard from "./components/NotesBoard"; // Will manage its own data
+import NotesBoard from "./components/NotesBoard";
 import RecipeBookPage from "./components/RecipeBookPage";
-
-// Initial data and localStorage logic for shoppingLists and notes are removed
-// as components will handle their own data via Firestore.
 
 const navSections = [
   {
@@ -70,11 +76,25 @@ const navSections = [
 export default function App() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
-  const [activeView, setActiveView] = useState("dashboard");
+  const [activeView, setActiveView] = useState("dashboard"); // Default view for logged-in users with family
 
-  // shoppingLists and notes state, and their useEffects for localStorage, are removed.
+  const { currentUser, userProfile, familyId, loadingAuth, authError } =
+    useAuth();
+  const [currentAuthPage, setCurrentAuthPage] = useState("signin"); // 'signin' or 'signup'
 
-  const renderView = () => {
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      // currentUser will become null via AuthContext
+      setCurrentAuthPage("signin"); // Go back to signin page after logout
+      setActiveView("dashboard"); // Reset view
+    } catch (error) {
+      console.error("Sign out error", error);
+      // Handle sign out error if needed
+    }
+  };
+
+  const renderAppContent = () => {
     switch (activeView) {
       case "chores":
         return <ChoreList />;
@@ -85,17 +105,37 @@ export default function App() {
       case "meals":
         return <MealPlanner />;
       case "shopping":
-        return <ShoppingList />; // No longer needs props for data
+        return <ShoppingList />;
       case "notes":
-        return <NotesBoard />; // No longer needs props for data
+        return <NotesBoard />;
       case "dashboard":
       default:
-        // Dashboard will now fetch its own data directly from Firestore
-        // or from a shared context if that pattern is adopted later.
         return <Dashboard />;
     }
   };
 
+  if (loadingAuth) {
+    return (
+      <LoadingOverlay visible={true} overlayProps={{ radius: "sm", blur: 2 }} />
+    );
+  }
+
+  if (!currentUser) {
+    // User is not logged in, show Sign In or Sign Up page
+    if (currentAuthPage === "signin") {
+      return (
+        <SignInPage onSwitchToSignUp={() => setCurrentAuthPage("signup")} />
+      );
+    }
+    return <SignUpPage onSwitchToSignIn={() => setCurrentAuthPage("signin")} />;
+  }
+
+  if (currentUser && userProfile && !familyId) {
+    // User is logged in, but has no familyId - show onboarding
+    return <FamilyOnboardingPage />;
+  }
+
+  // User is logged in and has a familyId
   return (
     <AppShell
       header={{ height: 60 }}
@@ -121,10 +161,20 @@ export default function App() {
               visibleFrom="sm"
               size="sm"
             />
-            {/* Consider making "Family Dashboard" dynamic or based on app name */}
-            <Title order={3}>Family Dashboard</Title>
+            <Title order={3}>
+              {userProfile?.familyName ||
+                (userProfile?.displayName
+                  ? `${userProfile.displayName}'s Space`
+                  : "Family Dashboard")}
+            </Title>
           </Group>
-          {/* User profile/settings icon can go here if needed */}
+          <Button
+            variant="subtle"
+            onClick={handleSignOut}
+            leftSection={<IconLogout size={16} />}
+          >
+            Sign Out
+          </Button>
         </Group>
       </AppShell.Header>
 
@@ -132,13 +182,16 @@ export default function App() {
         <Box mb="md">
           <UnstyledButton style={{ width: "100%" }}>
             <Group>
-              <Avatar color="blue" radius="sm">
-                {/* Placeholder Icon - replace with your actual logo/icon component if you have one */}
-                <IconSettings size="1.5rem" />
+              <Avatar color="blue" radius="sm" src={currentUser.photoURL}>
+                {userProfile?.displayName ? (
+                  userProfile.displayName.charAt(0).toUpperCase()
+                ) : (
+                  <IconSettings size="1.5rem" />
+                )}
               </Avatar>
               <div style={{ flex: 1 }}>
                 <Text size="sm" fw={500}>
-                  FamPlanner {/* Or your app's name */}
+                  {userProfile?.displayName || currentUser.email}
                 </Text>
                 <Text c="dimmed" size="xs">
                   v{appVersion}
@@ -159,7 +212,7 @@ export default function App() {
                   c="dimmed"
                   fw={700}
                   mb="xs"
-                  ml="xs" // Slight indent for section labels
+                  ml="xs"
                 >
                   {section.label}
                 </Text>
@@ -167,26 +220,25 @@ export default function App() {
               {section.links.map((link) => (
                 <NavLink
                   key={link.label}
-                  href="#" // Consider routing if this becomes a larger SPA
+                  href="#"
                   label={link.label}
                   leftSection={<link.icon size={18} stroke={1.5} />}
                   active={activeView === link.view}
                   onClick={(event) => {
                     event.preventDefault();
                     setActiveView(link.view);
-                    if (mobileOpened) toggleMobile(); // Close mobile nav on selection
+                    if (mobileOpened) toggleMobile();
                   }}
-                  variant="filled" // Or "light", "subtle" depending on theme preference
-                  radius="sm" // Rounded corners for NavLinks
+                  variant="filled"
+                  radius="sm"
                 />
               ))}
             </Box>
           ))}
         </AppShell.Section>
-        {/* Footer in Navbar can go here if needed */}
       </AppShell.Navbar>
 
-      <AppShell.Main>{renderView()}</AppShell.Main>
+      <AppShell.Main>{renderAppContent()}</AppShell.Main>
     </AppShell>
   );
 }

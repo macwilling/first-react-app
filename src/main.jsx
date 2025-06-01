@@ -7,14 +7,17 @@ import "@mantine/core/styles.css";
 import "@mantine/dates/styles.css";
 
 import App from "./App";
+import { AuthProvider } from "./contexts/AuthContext"; // Import AuthProvider
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <MantineProvider defaultColorScheme="light">
       <DatesProvider settings={{ consistentWeeks: true }}>
-        {" "}
-        {/* Optional: consistent weeks for DatePicker */}
-        <App />
+        <AuthProvider>
+          {" "}
+          {/* Wrap App with AuthProvider */}
+          <App />
+        </AuthProvider>
       </DatesProvider>
     </MantineProvider>
   </React.StrictMode>

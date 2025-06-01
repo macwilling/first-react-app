@@ -1,5 +1,5 @@
 // src/components/AddEditRecipeModal.jsx
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Modal,
   Button,
@@ -11,7 +11,7 @@ import {
   Paper,
   Title,
   Select,
-  NumberInput,
+  // NumberInput, // Not used directly in your latest form schema
   MultiSelect,
   Alert,
   Collapse,
@@ -32,11 +32,14 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
-  Timestamp,
+  // Timestamp, // Not directly used here
 } from "firebase/firestore";
 import { nanoid } from "nanoid";
+// Removed useAuth import as familyId will be passed as a prop.
+// If this modal were opened from multiple places without familyId easily available,
+// then using useAuth() here would be an option.
 
-// --- Ingredient Parsing Logic ---
+// --- Ingredient Parsing Logic (remains the same, ensure it's here or imported) ---
 const COMMON_UNITS = [
   "cup",
   "cups",
@@ -250,12 +253,27 @@ const recipeSchema = z.object({
   notes: z.string().optional(),
 });
 
-const RECIPES_COLLECTION = "recipes";
+// const RECIPES_COLLECTION = "recipes"; // Path will be constructed with familyId
 
-export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
+export default function AddEditRecipeModal({
+  opened,
+  onClose,
+  recipeToEdit,
+  familyId,
+}) {
+  // Added familyId prop
   const [isProcessingIngredientsButton, setIsProcessingIngredientsButton] =
     useState(false);
   const [ingredientEntryMode, setIngredientEntryMode] = useState("paste");
+  // Tags for MultiSelect - ideally this comes from existing tags in the family's recipes or a predefined list
+  const [availableTags, setAvailableTags] = useState([
+    "Breakfast",
+    "Lunch",
+    "Dinner",
+    "Dessert",
+    "Quick",
+    "Vegetarian",
+  ]);
 
   const form = useForm({
     initialValues: {
@@ -301,11 +319,11 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
           pastedInstructions: recipeToEdit.instructions?.join("\n") || "",
           notes: recipeToEdit.notes || "",
         });
-        if (recipeToEdit.ingredients && recipeToEdit.ingredients.length > 0) {
-          setIngredientEntryMode("structured");
-        } else {
-          setIngredientEntryMode("paste");
-        }
+        setIngredientEntryMode(
+          recipeToEdit.ingredients && recipeToEdit.ingredients.length > 0
+            ? "structured"
+            : "paste"
+        );
       } else {
         form.reset();
         setIngredientEntryMode("paste");
@@ -342,16 +360,10 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
   };
 
   const handleSubmit = async (values) => {
-    // --- START DIAGNOSTIC LOGS ---
-    console.log(
-      "handleSubmit: values received from form.onSubmit:",
-      JSON.stringify(values, null, 2)
-    );
-    console.log(
-      "handleSubmit: values.tags specifically:",
-      JSON.stringify(values.tags, null, 2)
-    );
-    // --- END DIAGNOSTIC LOGS ---
+    if (!familyId) {
+      form.setErrors({ submit: "Cannot save recipe: No family context." });
+      return;
+    }
 
     let finalInstructions = values.instructions;
     if (
@@ -368,23 +380,23 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
         .split("\n")
         .map((s) => s.trim())
         .filter((s) => s);
-      form.setFieldValue("instructions", finalInstructions);
+      form.setFieldValue("instructions", finalInstructions); // ensure form state is updated for validation
     }
 
     let finalIngredients = values.ingredients;
     if (ingredientEntryMode === "paste" && values.pastedIngredients) {
       finalIngredients = parsePastedIngredients(values.pastedIngredients);
-      form.setFieldValue("ingredients", finalIngredients);
+      form.setFieldValue("ingredients", finalIngredients); // ensure form state is updated for validation
     }
 
-    const formStateForValidation = {
+    // Perform validation with potentially updated finalIngredients and finalInstructions
+    const validationResult = recipeSchema.safeParse({
       ...values,
-      instructions: finalInstructions,
       ingredients: finalIngredients,
-    };
-    const validationResult = form.validate(formStateForValidation);
+      instructions: finalInstructions,
+    });
 
-    if (!validationResult.hasErrors) {
+    if (validationResult.success) {
       const recipePayload = {
         title: values.title,
         sourceURL: values.sourceURL,
@@ -395,26 +407,20 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
         tags: values.tags || [],
         ingredients: finalIngredients.map(
           ({ id, parseQuality, originalPastedLine, ...ing }) => ing
-        ),
+        ), // Strip temporary fields
         instructions: finalInstructions,
         notes: values.notes,
       };
 
-      // --- START DIAGNOSTIC LOG ---
-      console.log(
-        "handleSubmit: recipePayload being sent to Firestore:",
-        JSON.stringify(recipePayload, null, 2)
-      );
-      // --- END DIAGNOSTIC LOG ---
-
+      const recipesCollectionPath = `families/${familyId}/recipes`;
       try {
         if (recipeToEdit && recipeToEdit.id) {
           await updateDoc(
-            doc(db, RECIPES_COLLECTION, recipeToEdit.id),
+            doc(db, recipesCollectionPath, recipeToEdit.id),
             recipePayload
           );
         } else {
-          await addDoc(collection(db, RECIPES_COLLECTION), {
+          await addDoc(collection(db, recipesCollectionPath), {
             ...recipePayload,
             createdAt: serverTimestamp(),
           });
@@ -426,7 +432,20 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
         form.setErrors({ submit: "Failed to save recipe. Please try again." });
       }
     } else {
-      console.log("Form validation errors before submit:", form.errors);
+      // Map Zod errors to form errors
+      const zodErrors = validationResult.error.flatten().fieldErrors;
+      const formErrors = {};
+      for (const key in zodErrors) {
+        if (zodErrors[key]) {
+          formErrors[key] = zodErrors[key].join(", ");
+        }
+      }
+      form.setErrors(formErrors);
+      console.log(
+        "Form validation errors before submit:",
+        form.errors,
+        zodErrors
+      );
     }
   };
 
@@ -479,14 +498,18 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
             />
           </Group>
 
-          {/* This is the MultiSelect configuration from your "Test 2" that allowed selection but failed on save */}
           <MultiSelect
             label="Tags (Optional)"
-            placeholder="Select tags"
-            data={["Sample Tag A", "Sample Tag B", "Sample Tag C"]} // Hardcoded data for this specific test
+            placeholder="Select or add tags"
+            data={availableTags}
             searchable
-            // creatable={false} // creatable is removed for this test
-            // getCreateLabel={(query) => `+ Add tag: ${query}`} // getCreateLabel is removed for this test
+            creatable
+            getCreateLabel={(query) => `+ Add tag: ${query}`}
+            onCreate={(query) => {
+              const item = { value: query, label: query };
+              setAvailableTags((current) => [...current, item.value]); // Add to available tags for future use
+              return item;
+            }}
             {...form.getInputProps("tags")}
           />
 
@@ -499,7 +522,7 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
               minRows={5}
               autosize
               {...form.getInputProps("pastedInstructions")}
-              onBlur={handleProcessPastedInstructions}
+              onBlur={handleProcessPastedInstructions} // Process on blur
             />
             {form.errors.instructions && (
               <Text c="red" size="xs" mt="xs">
@@ -547,7 +570,8 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
                   variant="light"
                   loading={isProcessingIngredientsButton}
                 >
-                  Process & Edit Ingredients
+                  {" "}
+                  Process & Edit Ingredients{" "}
                 </Button>
               </>
             )}
@@ -607,7 +631,7 @@ export default function AddEditRecipeModal({ opened, onClose, recipeToEdit }) {
                     </Group>
                     {ing.parseQuality === "poor" && !ing.name && (
                       <Text c="red" size="xs" mt={2}>
-                        Ingredient name seems missing or unparsed.
+                        Ingredient name seems missing.
                       </Text>
                     )}
                   </Paper>

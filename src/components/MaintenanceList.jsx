@@ -1,5 +1,5 @@
 // src/components/MaintenanceList.jsx
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Button,
   TextInput,
@@ -17,6 +17,7 @@ import {
   Select,
   NumberInput,
   LoadingOverlay,
+  Alert,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useDisclosure } from "@mantine/hooks";
@@ -28,8 +29,9 @@ import {
   IconRefreshDot,
   IconRepeat,
   IconCheck,
+  IconAlertCircle,
 } from "@tabler/icons-react";
-import { db } from "../firebase"; // Import your Firebase config
+import { db } from "../firebase";
 import {
   collection,
   query,
@@ -42,6 +44,7 @@ import {
   Timestamp,
   serverTimestamp,
 } from "firebase/firestore";
+import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
 
 const recurrenceTypes = [
   { value: "days", label: "Day(s)" },
@@ -50,13 +53,15 @@ const recurrenceTypes = [
   { value: "years", label: "Year(s)" },
 ];
 
-const TASKS_COLLECTION = "maintenanceTasks";
+// const TASKS_COLLECTION = "maintenanceTasks"; // Will be nested
 
 export default function MaintenanceList() {
-  const [tasks, setTasks] = useState([]); // Local state for tasks from Firestore
+  const { familyId } = useAuth();
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [opened, { open, close }] = useDisclosure(false);
-  const [editingTask, setEditingTask] = useState(null); // Task object from Firestore
+  const [editingTask, setEditingTask] = useState(null);
   const [newTask, setNewTask] = useState({
     title: "",
     dueDate: null,
@@ -65,16 +70,19 @@ export default function MaintenanceList() {
     recurrenceType: "months",
   });
 
-  // --- Firestore Data Fetching (Real-time) ---
   useEffect(() => {
+    if (!familyId) {
+      setLoading(false);
+      setTasks([]);
+      return;
+    }
     setLoading(true);
-    // Order by due date, nulls last (Firestore doesn't support nullsLast directly in orderBy over different types easily)
-    // So we fetch and then sort, or sort by another primary field like createdAt then by dueDate.
-    // For simplicity, let's order by createdAt or title for now. Active sorting in UI can handle dueDate.
+    setError(null);
+    const tasksCollectionPath = `families/${familyId}/maintenanceTasks`;
     const q = query(
-      collection(db, TASKS_COLLECTION),
+      collection(db, tasksCollectionPath),
       orderBy("createdAt", "desc")
-    );
+    ); // Or by dueDate
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
@@ -82,7 +90,6 @@ export default function MaintenanceList() {
         querySnapshot.forEach((doc) => {
           tasksData.push({ ...doc.data(), id: doc.id });
         });
-        // Manual sort by dueDate (nulls last) after fetching
         tasksData.sort(
           (a, b) =>
             (a.dueDate?.toMillis() || Infinity) -
@@ -91,20 +98,24 @@ export default function MaintenanceList() {
         setTasks(tasksData);
         setLoading(false);
       },
-      (error) => {
-        console.error("Error fetching maintenance tasks: ", error);
+      (err) => {
+        console.error(
+          `Error fetching maintenance tasks for family ${familyId}: `,
+          err
+        );
+        setError("Failed to load maintenance tasks.");
         setLoading(false);
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [familyId]);
 
   const handleOpenModal = (taskToEdit = null) => {
     if (taskToEdit) {
       setEditingTask(taskToEdit);
       setNewTask({
         title: taskToEdit.title,
-        dueDate: taskToEdit.dueDate ? taskToEdit.dueDate.toDate() : null, // Convert Firestore Timestamp to JS Date
+        dueDate: taskToEdit.dueDate ? taskToEdit.dueDate.toDate() : null,
         isRecurring: taskToEdit.isRecurring || false,
         recurrenceInterval: taskToEdit.recurrenceInterval || 1,
         recurrenceType: taskToEdit.recurrenceType || "months",
@@ -123,6 +134,18 @@ export default function MaintenanceList() {
   };
 
   const handleSubmitTask = async () => {
+    if (!familyId) {
+      setError("Cannot save task: No family selected.");
+      return;
+    }
+    if (!newTask.title.trim()) {
+      setError("Task title cannot be empty.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    const tasksCollectionPath = `families/${familyId}/maintenanceTasks`;
     const taskDataPayload = {
       title: newTask.title,
       dueDate: newTask.dueDate
@@ -138,73 +161,81 @@ export default function MaintenanceList() {
       );
       taskDataPayload.recurrenceType = newTask.recurrenceType;
     } else {
-      // Ensure recurrence fields are removed or nullified if not recurring
       taskDataPayload.recurrenceInterval = null;
       taskDataPayload.recurrenceType = null;
     }
 
-    setLoading(true);
     try {
       if (editingTask && editingTask.id) {
-        const taskRef = doc(db, TASKS_COLLECTION, editingTask.id);
+        const taskRef = doc(db, tasksCollectionPath, editingTask.id);
         await updateDoc(taskRef, taskDataPayload);
       } else {
-        await addDoc(collection(db, TASKS_COLLECTION), {
+        await addDoc(collection(db, tasksCollectionPath), {
           ...taskDataPayload,
           createdAt: serverTimestamp(),
         });
       }
-    } catch (error) {
-      console.error("Error saving maintenance task: ", error);
+      close();
+    } catch (err) {
+      console.error("Error saving maintenance task: ", err);
+      setError("Failed to save task.");
     }
     setLoading(false);
-    close();
   };
 
   const deleteTaskFirestore = async (taskId) => {
-    // Renamed to avoid conflict with local deleteTask
+    if (!familyId) {
+      setError("Cannot delete task: No family selected.");
+      return;
+    }
+    if (!window.confirm("Are you sure you want to delete this task?")) return;
     setLoading(true);
-    const taskRef = doc(db, TASKS_COLLECTION, taskId);
+    setError(null);
+    const taskRef = doc(db, `families/${familyId}/maintenanceTasks`, taskId);
     try {
       await deleteDoc(taskRef);
-    } catch (error) {
-      console.error("Error deleting maintenance task: ", error);
+    } catch (err) {
+      console.error("Error deleting maintenance task: ", err);
+      setError("Failed to delete task.");
     }
     setLoading(false);
   };
 
-  const markNonRecurringAsDone = async (taskId) => {
-    // This will delete it
-    await deleteTaskFirestore(taskId);
-  };
+  const markNonRecurringAsDone = async (taskId) =>
+    await deleteTaskFirestore(taskId); // For non-recurring, done means delete
 
-  const calculateNextDueDateFromToday = (interval, type) => {
-    return dayjs().add(interval, type).valueOf(); // Returns millis
-  };
+  const calculateNextDueDateFromToday = (interval, type) =>
+    dayjs().add(interval, type).valueOf();
 
   const handleCompleteAndReschedule = async (taskToReschedule) => {
-    if (taskToReschedule.isRecurring && taskToReschedule.id) {
-      setLoading(true);
-      const nextDueDateMillis = calculateNextDueDateFromToday(
-        taskToReschedule.recurrenceInterval,
-        taskToReschedule.recurrenceType
-      );
-      const taskRef = doc(db, TASKS_COLLECTION, taskToReschedule.id);
-      try {
-        await updateDoc(taskRef, {
-          dueDate: Timestamp.fromMillis(nextDueDateMillis),
-          // lastRescheduledAt: serverTimestamp(), // Optional: track this
-        });
-      } catch (error) {
-        console.error("Error rescheduling task: ", error);
-      }
-      setLoading(false);
+    if (!familyId || !taskToReschedule.isRecurring || !taskToReschedule.id)
+      return;
+    setLoading(true);
+    setError(null);
+    const nextDueDateMillis = calculateNextDueDateFromToday(
+      taskToReschedule.recurrenceInterval,
+      taskToReschedule.recurrenceType
+    );
+    const taskRef = doc(
+      db,
+      `families/${familyId}/maintenanceTasks`,
+      taskToReschedule.id
+    );
+    try {
+      await updateDoc(taskRef, {
+        dueDate: Timestamp.fromMillis(nextDueDateMillis),
+      });
+    } catch (err) {
+      console.error("Error rescheduling task: ", err);
+      setError("Failed to reschedule task.");
     }
+    setLoading(false);
   };
 
   const getDueDateBadge = (firestoreTimestamp) => {
+    /* ... same logic ... */
     if (!firestoreTimestamp) return <Badge color="gray">No Date</Badge>;
-    const date = dayjs(firestoreTimestamp.toDate()); // Convert Timestamp to Dayjs object
+    const date = dayjs(firestoreTimestamp.toDate());
     const today = dayjs().startOf("day");
     if (date.isBefore(today))
       return (
@@ -231,7 +262,7 @@ export default function MaintenanceList() {
     );
   };
 
-  const rows = tasks.map((task) => (
+  const rows = tasks.map((task /* ... same row rendering logic ... */) => (
     <Table.Tr key={task.id}>
       <Table.Td>
         <Group gap="xs">
@@ -260,7 +291,7 @@ export default function MaintenanceList() {
               variant="light"
               color="green"
               onClick={() => handleCompleteAndReschedule(task)}
-              title={`Complete & Reschedule (next: today + ${task.recurrenceInterval} ${task.recurrenceType})`}
+              title={`Complete & Reschedule`}
             >
               <IconRefreshDot size={16} />
             </ActionIcon>
@@ -269,7 +300,7 @@ export default function MaintenanceList() {
               variant="light"
               color="green"
               onClick={() => markNonRecurringAsDone(task.id)}
-              title="Mark as Done"
+              title="Mark as Done (deletes)"
             >
               <IconCheck size={16} />
             </ActionIcon>
@@ -295,6 +326,16 @@ export default function MaintenanceList() {
     </Table.Tr>
   ));
 
+  if (!familyId && !loading) {
+    return (
+      <Paper p="lg" withBorder>
+        <Text>
+          Please create or join a family to use maintenance reminders.
+        </Text>
+      </Paper>
+    );
+  }
+
   return (
     <Paper
       shadow="md"
@@ -304,10 +345,22 @@ export default function MaintenanceList() {
       style={{ position: "relative" }}
     >
       <LoadingOverlay
-        visible={loading}
+        visible={loading && !error}
         zIndex={1000}
         overlayProps={{ radius: "sm", blur: 2 }}
       />
+      {error && (
+        <Alert
+          icon={<IconAlertCircle size="1rem" />}
+          title="Error"
+          color="red"
+          withCloseButton
+          onClose={() => setError(null)}
+          m="md"
+        >
+          {error}
+        </Alert>
+      )}
       <Modal
         opened={opened}
         onClose={close}
@@ -323,6 +376,7 @@ export default function MaintenanceList() {
               setNewTask({ ...newTask, title: e.currentTarget.value })
             }
             data-autofocus
+            required
           />
           <DatePickerInput
             label="Due Date"
@@ -378,17 +432,17 @@ export default function MaintenanceList() {
           </Button>
         </Stack>
       </Modal>
-
       <Group justify="space-between" mb="xl">
-        <Title order={2}>Maintenance Reminders</Title>
+        {" "}
+        <Title order={2}>Maintenance Reminders</Title>{" "}
         <Button
           onClick={() => handleOpenModal()}
           leftSection={<IconPlus size={18} />}
+          disabled={!familyId || loading}
         >
           New Reminder
-        </Button>
+        </Button>{" "}
       </Group>
-
       {tasks.length > 0 ? (
         <Box style={{ overflowX: "auto" }}>
           <Table striped highlightOnHover verticalSpacing="sm">
@@ -401,9 +455,9 @@ export default function MaintenanceList() {
             <Table.Tbody>{rows}</Table.Tbody>
           </Table>
         </Box>
-      ) : !loading ? (
-        <Text c="dimmed" align="center" mt="xl">
-          No maintenance tasks yet. Add some reminders!
+      ) : !loading && familyId ? (
+        <Text c="dimmed" ta="center" mt="xl">
+          No maintenance tasks for this family yet.
         </Text>
       ) : null}
     </Paper>

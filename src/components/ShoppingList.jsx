@@ -24,7 +24,7 @@ import {
   IconPencil,
   IconAlertCircle,
 } from "@tabler/icons-react";
-import { db } from "../firebase"; // Your Firebase config
+import { db } from "../firebase";
 import {
   collection,
   query,
@@ -38,11 +38,14 @@ import {
   arrayUnion,
   arrayRemove,
 } from "firebase/firestore";
-import { nanoid } from "nanoid"; // For unique item IDs within an array
+import { nanoid } from "nanoid";
+import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
 
-const SHOPPING_LISTS_COLLECTION = "shoppingLists";
+// No longer a top-level collection name, will be nested under families.
+// const SHOPPING_LISTS_COLLECTION = "shoppingLists";
 
 export default function ShoppingList() {
+  const { familyId } = useAuth(); // Get familyId from context
   const [lists, setLists] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -52,19 +55,26 @@ export default function ShoppingList() {
   const [openedItemModal, { open: openItemModal, close: closeItemModal }] =
     useDisclosure(false);
 
-  const [currentListId, setCurrentListId] = useState(null); // Firestore document ID of the list
-  const [editingList, setEditingList] = useState(null); // Full list object for editing
+  const [currentListId, setCurrentListId] = useState(null);
+  const [editingList, setEditingList] = useState(null);
   const [newListName, setNewListName] = useState("");
 
-  const [editingItem, setEditingItem] = useState(null); // Item object for editing
+  const [editingItem, setEditingItem] = useState(null);
   const [newItem, setNewItem] = useState({ text: "", quantity: "", notes: "" });
 
-  // Fetch Shopping Lists from Firestore
   useEffect(() => {
+    if (!familyId) {
+      setLoading(false);
+      setLists([]); // Clear lists if no familyId
+      // setError("No family selected to load shopping lists."); // Optional: user feedback
+      return;
+    }
     setLoading(true);
+    setError(null);
+    const listsCollectionPath = `families/${familyId}/shoppingLists`;
     const q = query(
-      collection(db, SHOPPING_LISTS_COLLECTION),
-      orderBy("createdAt", "asc") // Or 'name'
+      collection(db, listsCollectionPath),
+      orderBy("createdAt", "asc")
     );
 
     const unsubscribe = onSnapshot(
@@ -78,13 +88,16 @@ export default function ShoppingList() {
         setLoading(false);
       },
       (err) => {
-        console.error("Error fetching shopping lists: ", err);
+        console.error(
+          `Error fetching shopping lists for family ${familyId}: `,
+          err
+        );
         setError("Failed to load shopping lists.");
         setLoading(false);
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [familyId]); // Re-run if familyId changes
 
   // List Management
   const handleOpenListModal = (listToEdit = null) => {
@@ -99,18 +112,23 @@ export default function ShoppingList() {
   };
 
   const handleSubmitList = async () => {
+    if (!familyId) {
+      setError("Cannot save list: No family selected.");
+      return;
+    }
     if (!newListName.trim()) {
       setError("List name cannot be empty.");
       return;
     }
     setLoading(true);
     setError(null);
+    const listsCollectionPath = `families/${familyId}/shoppingLists`;
     try {
       if (editingList) {
-        const listRef = doc(db, SHOPPING_LISTS_COLLECTION, editingList.id);
+        const listRef = doc(db, listsCollectionPath, editingList.id);
         await updateDoc(listRef, { name: newListName });
       } else {
-        await addDoc(collection(db, SHOPPING_LISTS_COLLECTION), {
+        await addDoc(collection(db, listsCollectionPath), {
           name: newListName,
           items: [],
           createdAt: serverTimestamp(),
@@ -125,6 +143,10 @@ export default function ShoppingList() {
   };
 
   const deleteList = async (listId) => {
+    if (!familyId) {
+      setError("Cannot delete list: No family selected.");
+      return;
+    }
     if (
       window.confirm(
         "Are you sure you want to delete this list and all its items?"
@@ -132,8 +154,9 @@ export default function ShoppingList() {
     ) {
       setLoading(true);
       setError(null);
+      const listDocPath = `families/${familyId}/shoppingLists/${listId}`;
       try {
-        await deleteDoc(doc(db, SHOPPING_LISTS_COLLECTION, listId));
+        await deleteDoc(doc(db, listDocPath));
       } catch (err) {
         console.error("Error deleting list: ", err);
         setError("Failed to delete list.");
@@ -144,7 +167,7 @@ export default function ShoppingList() {
 
   // Item Management
   const handleOpenItemModal = (listId, itemToEdit = null) => {
-    setCurrentListId(listId);
+    setCurrentListId(listId); // This is the Firestore document ID of the list
     if (itemToEdit) {
       setEditingItem(itemToEdit);
       setNewItem({
@@ -160,30 +183,42 @@ export default function ShoppingList() {
   };
 
   const handleSubmitItem = async () => {
+    if (!familyId || !currentListId) {
+      alert("Cannot save item: No family or list selected.");
+      return;
+    }
     if (!newItem.text.trim()) {
-      // setError is not directly visible in item modal, consider modal-specific error state
       alert("Item name cannot be empty.");
       return;
     }
-    setLoading(true); // Potentially use a different loading state for item operations
-    const listRef = doc(db, SHOPPING_LISTS_COLLECTION, currentListId);
+    setLoading(true);
+    const listRef = doc(
+      db,
+      `families/${familyId}/shoppingLists`,
+      currentListId
+    );
     try {
+      const currentList = lists.find((l) => l.id === currentListId);
+      if (!currentList) throw new Error("List not found locally");
+
       if (editingItem) {
-        // To edit an item in an array, we need to remove the old and add the new.
-        // This requires finding the specific item in the current list's items array.
-        const listDoc = lists.find((l) => l.id === currentListId);
-        if (listDoc) {
-          const itemToUpdate = listDoc.items.find(
-            (i) => i.id === editingItem.id
+        const itemToUpdate = currentList.items.find(
+          (i) => i.id === editingItem.id
+        );
+        if (itemToUpdate) {
+          // To edit an item in an array atomically: remove old, add new.
+          // This is complex with arrayUnion/Remove if other fields besides the updated one should persist.
+          // A simpler way for arrays is to read the doc, modify array in code, then overwrite the whole array.
+          // However, for real-time, arrayUnion/Remove is often preferred for sub-object changes.
+          // Let's try to replace the item in the array.
+          const updatedItems = currentList.items.map((item) =>
+            item.id === editingItem.id ? { ...itemToUpdate, ...newItem } : item
           );
-          if (itemToUpdate) {
-            await updateDoc(listRef, {
-              items: arrayRemove(itemToUpdate), // Remove the old item
-            });
-            await updateDoc(listRef, {
-              items: arrayUnion({ ...itemToUpdate, ...newItem }), // Add the updated item
-            });
-          }
+          await updateDoc(listRef, { items: updatedItems });
+        } else {
+          throw new Error(
+            "Editing item not found in local list state for update."
+          );
         }
       } else {
         await updateDoc(listRef, {
@@ -193,23 +228,24 @@ export default function ShoppingList() {
       closeItemModal();
     } catch (err) {
       console.error("Error saving item: ", err);
-      // Consider modal-specific error display
       alert("Failed to save item.");
     }
     setLoading(false);
   };
 
   const toggleItemDone = async (listId, itemId) => {
+    if (!familyId) return;
     setLoading(true);
-    const listRef = doc(db, SHOPPING_LISTS_COLLECTION, listId);
-    const listDoc = lists.find((l) => l.id === listId);
-    if (listDoc) {
-      const itemToToggle = listDoc.items.find((i) => i.id === itemId);
+    const listRef = doc(db, `families/${familyId}/shoppingLists`, listId);
+    const currentList = lists.find((l) => l.id === listId);
+    if (currentList) {
+      const itemToToggle = currentList.items.find((i) => i.id === itemId);
       if (itemToToggle) {
-        const updatedItem = { ...itemToToggle, done: !itemToToggle.done };
+        const updatedItems = currentList.items.map((item) =>
+          item.id === itemId ? { ...item, done: !item.done } : item
+        );
         try {
-          await updateDoc(listRef, { items: arrayRemove(itemToToggle) });
-          await updateDoc(listRef, { items: arrayUnion(updatedItem) });
+          await updateDoc(listRef, { items: updatedItems });
         } catch (err) {
           console.error("Error toggling item: ", err);
           alert("Failed to update item status.");
@@ -220,13 +256,15 @@ export default function ShoppingList() {
   };
 
   const deleteItem = async (listId, itemId) => {
+    if (!familyId) return;
     setLoading(true);
-    const listRef = doc(db, SHOPPING_LISTS_COLLECTION, listId);
-    const listDoc = lists.find((l) => l.id === listId);
-    if (listDoc) {
-      const itemToDelete = listDoc.items.find((i) => i.id === itemId);
+    const listRef = doc(db, `families/${familyId}/shoppingLists`, listId);
+    const currentList = lists.find((l) => l.id === listId);
+    if (currentList) {
+      const itemToDelete = currentList.items.find((i) => i.id === itemId);
       if (itemToDelete) {
         try {
+          // For arrayRemove, you must pass the exact object to remove.
           await updateDoc(listRef, { items: arrayRemove(itemToDelete) });
         } catch (err) {
           console.error("Error deleting item: ", err);
@@ -236,6 +274,14 @@ export default function ShoppingList() {
     }
     setLoading(false);
   };
+
+  if (!familyId && !loading) {
+    return (
+      <Paper p="lg" withBorder>
+        <Text>Please create or join a family to use the shopping lists.</Text>
+      </Paper>
+    );
+  }
 
   return (
     <Paper
@@ -335,6 +381,7 @@ export default function ShoppingList() {
         <Button
           onClick={() => handleOpenListModal()}
           leftSection={<IconPlus size={18} />}
+          disabled={!familyId || loading}
         >
           New List
         </Button>
@@ -386,7 +433,6 @@ export default function ShoppingList() {
                   Add Item to {list.name}
                 </Button>
                 {list.items && list.items.length > 0 ? (
-                  // Sort items: not done first, then by text
                   list.items
                     .sort((a, b) => {
                       if (a.done !== b.done) {
@@ -459,9 +505,9 @@ export default function ShoppingList() {
             </Accordion.Item>
           ))}
         </Accordion>
-      ) : !loading ? (
+      ) : !loading && familyId ? (
         <Text c="dimmed" ta="center" mt="xl">
-          No shopping lists yet. Create one to get started!
+          No shopping lists yet for this family. Create one to get started!
         </Text>
       ) : null}
     </Paper>

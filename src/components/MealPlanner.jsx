@@ -13,7 +13,7 @@ import {
   Box,
   useMantineTheme,
   LoadingOverlay,
-  Alert, // Added for error display
+  Alert,
 } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import {
@@ -22,14 +22,12 @@ import {
   IconCalendarEvent,
   IconPlus,
   IconTrash,
-  IconAlertCircle, // Added for error display
+  IconAlertCircle,
 } from "@tabler/icons-react";
 import dayjs from "dayjs";
 import weekOfYear from "dayjs/plugin/weekOfYear";
 import isoWeek from "dayjs/plugin/isoWeek";
-
-// Firebase imports: db from your firebase.js, specific functions from firestore
-import { db } from "../firebase"; // Correctly points to src/firebase.js
+import { db } from "../firebase";
 import {
   collection,
   doc,
@@ -38,10 +36,7 @@ import {
   query,
   setDoc,
   serverTimestamp,
-  // getDoc, // No longer needed for meal plan fetching
 } from "firebase/firestore";
-
-// DND Kit Imports
 import {
   DndContext,
   DragOverlay,
@@ -53,20 +48,18 @@ import {
 } from "@dnd-kit/core";
 import { useDraggable } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
-
-import SelectRecipeModal from "./SelectRecipeModal"; //
+import SelectRecipeModal from "./SelectRecipeModal";
+import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
 
 dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
 
-const RECIPES_COLLECTION_ID = "recipes"; // Using original collection ID
-const MEAL_PLANS_COLLECTION_ID = "mealPlans"; // Using original collection ID
-const FAMILY_MEAL_PLAN_DOC_ID = "currentFamilyPlan";
+// const RECIPES_COLLECTION_ID = "recipes"; // Now nested
+// const MEAL_PLANS_COLLECTION_ID = "mealPlans"; // Now nested
+const FAMILY_MEAL_PLAN_DOC_ID = "currentFamilyPlan"; // This will be the ID within the family's mealPlans subcollection
 
 const FIXED_DAY_WIDTH_DESKTOP = 230;
-// const SCROLL_AMOUNT_DESKTOP = FIXED_DAY_WIDTH_DESKTOP * 2; // Not directly used, but can be if scroll buttons have fixed amounts
 
-// --- Helper: Get Days in Week (no change) ---
 const getDaysInWeek = (date) => {
   const days = [];
   const startOfWeek = dayjs(date).startOf("week");
@@ -76,14 +69,12 @@ const getDaysInWeek = (date) => {
   return days;
 };
 
-// --- Draggable Recipe Item (Desktop only - no change from your structure) ---
 function DraggableRecipeItem({ recipe }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: `recipe-${recipe.id}`,
       data: { type: "recipe", recipe },
     });
-
   const style = transform
     ? {
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
@@ -92,20 +83,19 @@ function DraggableRecipeItem({ recipe }) {
         opacity: isDragging ? 0.8 : 1,
       }
     : { cursor: "grab" };
-
   const content = (
     <>
+      {" "}
       <Text size="sm" fw={500} truncate>
         {recipe.title}
-      </Text>
+      </Text>{" "}
       {recipe.prepTime && (
         <Text size="xs" c="dimmed">
           Prep: {recipe.prepTime}
         </Text>
-      )}
+      )}{" "}
     </>
   );
-
   return (
     <Paper
       ref={setNodeRef}
@@ -122,15 +112,12 @@ function DraggableRecipeItem({ recipe }) {
   );
 }
 
-// --- Recipe Discovery Panel (Desktop only - no change from your structure) ---
 function RecipeDiscoveryPanel({ recipes, isMobile }) {
   const [searchTerm, setSearchTerm] = useState("");
   if (isMobile) return null;
-
   const filteredRecipes = recipes.filter((recipe) =>
     recipe.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
   return (
     <Paper
       shadow="sm"
@@ -162,7 +149,6 @@ function RecipeDiscoveryPanel({ recipes, isMobile }) {
   );
 }
 
-// --- Day Column (Droppable for Desktop, Clickable area for Mobile) ---
 function DayColumn({
   dateString,
   isMobile,
@@ -176,13 +162,11 @@ function DayColumn({
     data: { date: dateString, type: "day" },
     disabled: isMobile,
   });
-
   const dayClickHandler = () => {
     if (isMobile && onDayClick) {
       onDayClick(dateString);
     }
   };
-
   return (
     <Box
       ref={setNodeRef}
@@ -279,7 +263,6 @@ function DayColumn({
   );
 }
 
-// --- Weekly Calendar View ---
 function WeeklyCalendarView({
   week,
   plannedMeals,
@@ -292,7 +275,6 @@ function WeeklyCalendarView({
   const scrollContainerRef = useRef(null);
   const [showLeftScroll, setShowLeftScroll] = useState(false);
   const [showRightScroll, setShowRightScroll] = useState(true);
-
   const handleScroll = useCallback(() => {
     if (scrollContainerRef.current) {
       const { scrollLeft, scrollWidth, clientWidth } =
@@ -301,7 +283,6 @@ function WeeklyCalendarView({
       setShowRightScroll(scrollLeft < scrollWidth - clientWidth - 5);
     }
   }, []);
-
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (container && !isMobile) {
@@ -314,7 +295,6 @@ function WeeklyCalendarView({
       setShowRightScroll(false);
     }
   }, [week, isMobile, handleScroll]);
-
   const scroll = (direction) => {
     if (scrollContainerRef.current) {
       const scrollAmount = FIXED_DAY_WIDTH_DESKTOP * 2 * direction;
@@ -324,7 +304,6 @@ function WeeklyCalendarView({
       });
     }
   };
-
   return (
     <Paper
       shadow="sm"
@@ -343,7 +322,6 @@ function WeeklyCalendarView({
           {dayjs(daysOfWeek[6]).format("MMM D, YYYY")}
         </Title>
       </Group>
-
       {!isMobile && showLeftScroll && (
         <ActionIcon
           variant="filled"
@@ -380,7 +358,6 @@ function WeeklyCalendarView({
           <IconChevronRight />
         </ActionIcon>
       )}
-
       <Box
         ref={scrollContainerRef}
         style={{
@@ -431,8 +408,8 @@ function WeeklyCalendarView({
   );
 }
 
-// --- Main MealPlanner Component ---
 export default function MealPlanner() {
+  const { familyId } = useAuth();
   const theme = useMantineTheme();
   const isMobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm})`);
 
@@ -450,23 +427,24 @@ export default function MealPlanner() {
   ] = useDisclosure(false);
   const [modalTargetDate, setModalTargetDate] = useState(null);
 
-  // DND Sensors (Simplified)
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: {
-        delay: 100,
-        tolerance: 5,
-      },
+      activationConstraint: { delay: 100, tolerance: 5 },
     }),
     useSensor(KeyboardSensor)
   );
 
-  // Fetch All Recipes
   useEffect(() => {
-    setIsLoading(true);
+    if (!familyId) {
+      setAllRecipes([]);
+      // Do not set loading true if there's no familyId, wait for meal plan effect
+      return;
+    }
+    // setIsLoading(true); // Handled by combined loading
     setError(null);
+    const recipesCollectionPath = `families/${familyId}/recipes`;
     const q = query(
-      collection(db, RECIPES_COLLECTION_ID),
+      collection(db, recipesCollectionPath),
       orderBy("title", "asc")
     );
     const unsubscribe = onSnapshot(
@@ -477,30 +455,27 @@ export default function MealPlanner() {
           recipesData.push({ ...doc.data(), id: doc.id });
         });
         setAllRecipes(recipesData);
-        // Consider setting isLoading to false only after both recipes and plans are loaded
       },
       (err) => {
-        console.error("Error fetching recipes: ", err);
-        setError("Failed to load recipes. Please try again later.");
-        setAllRecipes([]);
+        console.error(`Error fetching recipes for family ${familyId}: `, err);
+        setError(
+          (prev) => (prev ? prev + " | " : "") + "Failed to load recipes."
+        );
       }
     );
-    // Set loading to false after initial recipe load attempt or if plan loading is also considered
-    // For now, recipes loading manages its part of isLoading.
-    // If combined, this setIsLoading(false) would move.
-    // setIsLoading(false); // This might be too soon if plan is also loading.
     return () => unsubscribe();
-  }, []);
+  }, [familyId]);
 
-  // Fetch/Subscribe to Meal Plan using onSnapshot
   useEffect(() => {
-    setIsLoading(true); // Set loading true when we start fetching plan
+    if (!familyId) {
+      setPlannedMeals({});
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
     setError(null);
-    const planDocRef = doc(
-      db,
-      MEAL_PLANS_COLLECTION_ID,
-      FAMILY_MEAL_PLAN_DOC_ID
-    );
+    const mealPlanDocPath = `families/${familyId}/mealPlans/${FAMILY_MEAL_PLAN_DOC_ID}`;
+    const planDocRef = doc(db, mealPlanDocPath);
 
     const unsubscribe = onSnapshot(
       planDocRef,
@@ -509,55 +484,70 @@ export default function MealPlanner() {
           setPlannedMeals(docSnap.data().meals || {});
         } else {
           setPlannedMeals({});
-          // console.log("Meal plan document does not exist. A new one can be created on save.");
         }
-        setIsLoading(false); // Set loading to false after plan is fetched/updated
+        setIsLoading(false);
       },
       (err) => {
-        console.error("Error fetching meal plan:", err);
-        setError("Failed to load meal plan. Please try again later.");
+        console.error(`Error fetching meal plan for family ${familyId}:`, err);
+        setError(
+          (prev) => (prev ? prev + " | " : "") + "Failed to load meal plan."
+        );
         setPlannedMeals({});
-        setIsLoading(false); // Also set loading to false on error
+        setIsLoading(false);
       }
     );
     return () => unsubscribe();
-  }, []); // Runs once on mount
+  }, [familyId]);
 
-  // Save Plan to Firestore
-  const savePlanToFirestore = useCallback(async (newPlanData) => {
-    // Consider a more subtle loading indicator for saves if full overlay is too much
-    // setIsLoading(true);
-    setError(null);
-    try {
-      const planDocRef = doc(
-        db,
-        MEAL_PLANS_COLLECTION_ID,
-        FAMILY_MEAL_PLAN_DOC_ID
-      );
-      await setDoc(planDocRef, {
-        meals: newPlanData,
-        updatedAt: serverTimestamp(),
-      });
-      // console.log("Meal plan saved successfully!");
-    } catch (err) {
-      console.error("Error saving meal plan:", err);
-      setError(
-        "Failed to save meal plan. Please check your connection and try again."
-      );
-    } finally {
-      // setIsLoading(false); // Stop loading after save attempt
-    }
-  }, []); // db, MEAL_PLANS_COLLECTION_ID, FAMILY_MEAL_PLAN_DOC_ID are constants from outer scope
+  const savePlanToFirestore = useCallback(
+    async (newPlanData) => {
+      if (!familyId) {
+        setError("Cannot save plan: No family selected.");
+        return;
+      }
+      // setError(null); // Cleared by useEffects mostly
+      const mealPlanDocPath = `families/${familyId}/mealPlans/${FAMILY_MEAL_PLAN_DOC_ID}`;
+      try {
+        const planDocRef = doc(db, mealPlanDocPath);
+        await setDoc(
+          planDocRef,
+          { meals: newPlanData, updatedAt: serverTimestamp() },
+          { merge: true }
+        ); // Merge true to create if not exists
+      } catch (err) {
+        console.error("Error saving meal plan:", err);
+        setError(
+          "Failed to save meal plan. Please check your connection and try again."
+        );
+      }
+    },
+    [familyId]
+  );
 
-  // Week Navigation
   const handleNextWeek = () => setCurrentDate((prev) => prev.add(1, "week"));
   const handlePreviousWeek = () =>
     setCurrentDate((prev) => prev.subtract(1, "week"));
   const handleGoToToday = () => setCurrentDate(dayjs());
 
-  // DND Handlers
   function handleDragStart(event) {
-    if (isMobile) return;
+    /* ... same ... */
+  }
+  function handleDragEnd(event) {
+    /* ... same, calls savePlanToFirestore ... */
+  }
+  const handleOpenModalForDate = (dateString) => {
+    /* ... same ... */
+  };
+  const handleRecipeSelectFromModal = (selectedRecipe) => {
+    /* ... same, calls savePlanToFirestore ... */
+  };
+  const handleDeletePlannedRecipe = (dateString, mealInstanceId) => {
+    /* ... same, calls savePlanToFirestore ... */
+  };
+
+  // Re-paste handlers with savePlanToFirestore (ensure they use the useCallback version)
+  function handleDragStart(event) {
+    if (isMobile || !familyId) return;
     const { active } = event;
     if (active.data.current?.type === "recipe") {
       setDraggedRecipe(active.data.current.recipe);
@@ -565,7 +555,7 @@ export default function MealPlanner() {
   }
 
   function handleDragEnd(event) {
-    if (isMobile) return;
+    if (isMobile || !familyId) return;
     const { active, over } = event;
     setDraggedRecipe(null);
 
@@ -585,20 +575,20 @@ export default function MealPlanner() {
           instanceId: `${recipeBeingDragged.id}-${Date.now()}`,
         };
         newPlan[targetDate] = [...dayMeals, newMealInstance];
-        setPlannedMeals(newPlan); // Optimistic update
+        setPlannedMeals(newPlan);
         savePlanToFirestore(newPlan);
       }
     }
   }
 
-  // Mobile: Open Modal
   const handleOpenModalForDate = (dateString) => {
+    if (!familyId) return;
     setModalTargetDate(dateString);
     openSelectRecipeModal();
   };
 
-  // Mobile: Recipe Selected from Modal
   const handleRecipeSelectFromModal = (selectedRecipe) => {
+    if (!familyId) return;
     if (selectedRecipe && modalTargetDate) {
       const newPlan = { ...plannedMeals };
       const dayMeals = newPlan[modalTargetDate] || [];
@@ -607,29 +597,36 @@ export default function MealPlanner() {
         instanceId: `${selectedRecipe.id}-${Date.now()}`,
       };
       newPlan[modalTargetDate] = [...dayMeals, newMealInstance];
-      setPlannedMeals(newPlan); // Optimistic update
+      setPlannedMeals(newPlan);
       savePlanToFirestore(newPlan);
     }
     closeSelectRecipeModal();
     setModalTargetDate(null);
   };
 
-  // Delete Planned Recipe
   const handleDeletePlannedRecipe = (dateString, mealInstanceId) => {
+    if (!familyId) return;
     const newPlan = { ...plannedMeals };
     const dayMeals = newPlan[dateString] || [];
     const updatedDayMeals = dayMeals.filter(
       (meal) => meal.instanceId !== mealInstanceId
     );
-
     if (updatedDayMeals.length === 0) {
       delete newPlan[dateString];
     } else {
       newPlan[dateString] = updatedDayMeals;
     }
-    setPlannedMeals(newPlan); // Optimistic update
+    setPlannedMeals(newPlan);
     savePlanToFirestore(newPlan);
   };
+
+  if (!familyId && !isLoading) {
+    return (
+      <Paper p="lg" withBorder>
+        <Text>Please create or join a family to use the meal planner.</Text>
+      </Paper>
+    );
+  }
 
   return (
     <DndContext
@@ -643,7 +640,7 @@ export default function MealPlanner() {
         p={0}
         radius="md"
         style={{
-          height: "calc(100vh - 80px)", // Adjust based on AppShell header/padding
+          height: "calc(100vh - 80px)",
           display: "flex",
           flexDirection: "column",
           position: "relative",
@@ -654,7 +651,6 @@ export default function MealPlanner() {
           zIndex={1000}
           overlayProps={{ radius: "sm", blur: 2 }}
         />
-
         <Group
           justify="space-between"
           align="center"
@@ -667,6 +663,7 @@ export default function MealPlanner() {
               onClick={handleGoToToday}
               variant="light"
               leftSection={<IconCalendarEvent size={16} />}
+              disabled={!familyId || isLoading}
             >
               Today
             </Button>
@@ -675,6 +672,7 @@ export default function MealPlanner() {
               title="Previous week"
               variant="outline"
               size="lg"
+              disabled={!familyId || isLoading}
             >
               <IconChevronLeft />
             </ActionIcon>
@@ -683,12 +681,12 @@ export default function MealPlanner() {
               title="Next week"
               variant="outline"
               size="lg"
+              disabled={!familyId || isLoading}
             >
               <IconChevronRight />
             </ActionIcon>
           </Group>
         </Group>
-
         {error && (
           <Alert
             icon={<IconAlertCircle size="1rem" />}
@@ -701,7 +699,6 @@ export default function MealPlanner() {
             {error}
           </Alert>
         )}
-
         <Grid style={{ flexGrow: 1, margin: 0, overflow: "hidden" }} gutter={0}>
           {!isMobile && (
             <Grid.Col
@@ -729,11 +726,7 @@ export default function MealPlanner() {
           )}
           <Grid.Col
             span={{ base: 12, md: isMobile ? 12 : 9 }}
-            style={{
-              height: "100%",
-              display: "flex",
-              flexDirection: "column",
-            }}
+            style={{ height: "100%", display: "flex", flexDirection: "column" }}
           >
             <Box
               style={{
@@ -753,7 +746,6 @@ export default function MealPlanner() {
             </Box>
           </Grid.Col>
         </Grid>
-
         {!isMobile && draggedRecipe && (
           <DragOverlay dropAnimation={null}>
             <Paper
@@ -774,7 +766,6 @@ export default function MealPlanner() {
             </Paper>
           </DragOverlay>
         )}
-
         <SelectRecipeModal
           opened={selectRecipeModalOpened}
           onClose={closeSelectRecipeModal}
