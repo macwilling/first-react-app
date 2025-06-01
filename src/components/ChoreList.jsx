@@ -47,11 +47,11 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Corrected Import Path
 
 dayjs.extend(isSameOrBefore);
 
-const familyMembersMock = ["Alice", "Bob", "Charlie", "Mom", "Dad"]; // Keep for now, or derive from family doc
+const familyMembersMock = ["Alice", "Bob", "Charlie", "Mom", "Dad"];
 const familyColors = {
   Alice: "pink",
   Bob: "indigo",
@@ -73,14 +73,13 @@ const daysOfWeek = [
   { value: "6", label: "Saturday" },
 ];
 
-// const CHORES_COLLECTION = "chores"; // Will be nested
-
 const getFirstNextDueDate = (
   baseDate,
   recurrenceType,
   recurrenceInterval,
   recurrenceDays = []
 ) => {
+  /* ... same ... */
   let startDate = dayjs(baseDate).startOf("day");
   if (recurrenceType === "daily") {
     return startDate.add(recurrenceInterval, "day").valueOf();
@@ -92,51 +91,42 @@ const getFirstNextDueDate = (
       return startDate.add(recurrenceInterval, "week").valueOf();
     let potentialDate = startDate.clone();
     for (let i = 0; i < 14 + 7 * recurrenceInterval; i++) {
-      // Check out far enough
       potentialDate = startDate.add(i, "day");
       if (numericRecurrenceDays.includes(potentialDate.day()))
         return potentialDate.valueOf();
     }
-    return startDate.add(recurrenceInterval, "week").valueOf(); // Fallback
+    return startDate.add(recurrenceInterval, "week").valueOf();
   }
   return startDate.add(1, "day").valueOf();
 };
-
 const getNextDueDateAfterCompletion = (
   lastCompletedOrDueDate,
   recurrenceType,
   recurrenceInterval,
   recurrenceDays = []
 ) => {
+  /* ... same, (ensure it's the updated one from previous turn if changes were made) ... */
   let anchorDate = dayjs(lastCompletedOrDueDate).startOf("day");
   if (recurrenceType === "daily") {
     return anchorDate.add(recurrenceInterval, "day").valueOf();
   } else if (recurrenceType === "weekly") {
-    // If specific days are selected, find the next occurrence of one of those days,
-    // ensuring it's at least `recurrenceInterval` weeks away if the current week's days are already passed or it's the completion day.
     const numericRecurrenceDays = recurrenceDays
       .map(Number)
       .sort((a, b) => a - b);
     if (numericRecurrenceDays.length > 0) {
       let potentialNextDate = anchorDate.clone();
-      for (let i = 0; i < 7 * (recurrenceInterval || 1) + 7; i++) {
-        // search within interval weeks + one more
-        potentialNextDate = anchorDate.add(i + 1, "day"); // Start checking from next day
+      // Start searching from the day *after* the anchorDate to find the next valid day.
+      for (let i = 1; i <= 7 * (recurrenceInterval || 1) + 7; i++) {
+        potentialNextDate = anchorDate.add(i, "day");
         if (numericRecurrenceDays.includes(potentialNextDate.day())) {
-          // Ensure it respects the interval if it's a multi-week interval
-          if (
-            recurrenceInterval > 1 &&
-            potentialNextDate.isBefore(
-              anchorDate.add(recurrenceInterval, "week").startOf("week")
-            )
-          ) {
-            // If interval is e.g. 2 weeks, and we find a day in the *next* week, skip it.
-            // This logic might need refinement based on exact desired behavior for multi-week intervals with specific days
-          }
+          // If recurrenceInterval is e.g. 2 weeks, and the found day is within the first week after anchor,
+          // we might need to advance it further if the goal is strictly "every N weeks on day X".
+          // For simplicity, this version finds the *next* occurrence of a selected day.
+          // More complex logic might be needed if "every 2 weeks on Monday" means "skip next Monday if it's only 1 week away".
           return potentialNextDate.valueOf();
         }
       }
-      // Fallback if no suitable day found soon (e.g., interval is long)
+      // Fallback: advance by interval and pick the first available day of week
       return anchorDate
         .add(recurrenceInterval || 1, "week")
         .day(numericRecurrenceDays[0])
@@ -169,38 +159,64 @@ export default function ChoreList() {
 
   useEffect(() => {
     if (familyId && userProfile?.familyId === familyId) {
-      // Ensure userProfile is also for the current familyId context
       const familyDocRef = doc(db, "families", familyId);
-      const unsub = onSnapshot(familyDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const membersData = docSnap.data().members;
-          if (membersData) {
-            // Assuming membersData is like { uid1: 'admin', uid2: 'member' }
-            // For simplicity, we'll just use the UIDs or fetch display names
-            // For this example, we'll use a placeholder if display names aren't easily available
-            // You'd typically fetch user profiles for these UIDs to get display names
-            const memberNames = Object.keys(membersData); // Or fetch actual names
-            setFamilyMembers(
-              memberNames.length > 0 ? memberNames : familyMembersMock
-            );
-            if (!newChore.assignedTo && memberNames.length > 0) {
-              setNewChore((prev) => ({ ...prev, assignedTo: memberNames[0] }));
-            } else if (!newChore.assignedTo && familyMembersMock.length > 0) {
-              setNewChore((prev) => ({
-                ...prev,
-                assignedTo: familyMembersMock[0],
-              }));
+      const unsub = onSnapshot(
+        familyDocRef,
+        async (docSnap) => {
+          // Make async to fetch profiles
+          if (docSnap.exists()) {
+            const membersData = docSnap.data().members;
+            if (membersData) {
+              const memberIds = Object.keys(membersData);
+              const memberProfiles = await Promise.all(
+                memberIds.map(async (uid) => {
+                  const userDoc = await getDoc(doc(db, "users", uid));
+                  return userDoc.exists()
+                    ? { id: uid, ...userDoc.data() }
+                    : { id: uid, displayName: "Unknown User" };
+                })
+              );
+              // Use displayName for Select data
+              const memberSelectData = memberProfiles.map(
+                (p) => p.displayName || p.id
+              );
+              setFamilyMembers(
+                memberSelectData.length > 0
+                  ? memberSelectData
+                  : familyMembersMock
+              );
+              if (!newChore.assignedTo && memberSelectData.length > 0) {
+                setNewChore((prev) => ({
+                  ...prev,
+                  assignedTo: memberSelectData[0],
+                }));
+              } else if (
+                !newChore.assignedTo &&
+                familyMembersMock.length > 0 &&
+                memberSelectData.length === 0
+              ) {
+                setNewChore((prev) => ({
+                  ...prev,
+                  assignedTo: familyMembersMock[0],
+                }));
+              }
+            } else {
+              setFamilyMembers(familyMembersMock);
             }
           } else {
-            setFamilyMembers(familyMembersMock); // Fallback
+            setFamilyMembers(familyMembersMock);
           }
+        },
+        (err) => {
+          console.error("Error fetching family members:", err);
+          setFamilyMembers(familyMembersMock); // Fallback on error
         }
-      });
+      );
       return () => unsub();
     } else {
-      setFamilyMembers(familyMembersMock); // Fallback
+      setFamilyMembers(familyMembersMock);
     }
-  }, [familyId, userProfile]);
+  }, [familyId, userProfile]); // Rerun if userProfile changes (e.g., familyId assigned)
 
   useEffect(() => {
     if (!familyId) {
@@ -389,7 +405,7 @@ export default function ChoreList() {
       if (chore.nextDueDate && chore.nextDueDate.toDate) {
         return dayjs(chore.nextDueDate.toDate()).isSameOrBefore(today, "day");
       }
-      return false; // If recurring but no nextDueDate, treat as not active yet or misconfigured
+      return false;
     })
     .sort((a, b) => {
       const aDate = a.isRecurring
@@ -410,119 +426,117 @@ export default function ChoreList() {
     )
     .sort((a, b) => a.nextDueDate.toMillis() - b.nextDueDate.toMillis());
 
-  const rows = activeChores.map(
-    (chore /* ... same row rendering logic ... */) => (
-      <Table.Tr
-        key={chore.id}
-        bg={
-          !chore.isRecurring && chore.done
-            ? "var(--mantine-color-gray-1)"
-            : undefined
-        }
-      >
-        <Table.Td>
+  const rows = activeChores.map((chore) => (
+    <Table.Tr
+      key={chore.id}
+      bg={
+        !chore.isRecurring && chore.done
+          ? "var(--mantine-color-gray-1)"
+          : undefined
+      }
+    >
+      <Table.Td>
+        {" "}
+        <Checkbox
+          checked={!chore.isRecurring && chore.done}
+          onChange={() => handleCompleteInstance(chore)}
+          aria-label="Mark as done"
+        />{" "}
+      </Table.Td>
+      <Table.Td>
+        <Group gap="xs">
           {" "}
-          <Checkbox
-            checked={!chore.isRecurring && chore.done}
-            onChange={() => handleCompleteInstance(chore)}
-            aria-label="Mark as done"
-          />{" "}
-        </Table.Td>
-        <Table.Td>
-          <Group gap="xs">
-            {" "}
-            {chore.isRecurring && (
-              <IconRepeat
-                size={16}
-                color="gray"
-                title={`Recurs every ${chore.recurrenceInterval} ${chore.recurrenceType}`}
-              />
-            )}{" "}
-            <Text fw={500} strikethrough={!chore.isRecurring && chore.done}>
-              {chore.title}
-            </Text>{" "}
-          </Group>
-          {chore.isRecurring && chore.nextDueDate && (
-            <Text size="xs" c="dimmed">
-              Due: {dayjs(chore.nextDueDate.toDate()).format("ddd, MMM D")}
-            </Text>
-          )}
-          {!chore.isRecurring && chore.done && chore.completedAt && (
-            <Text size="xs" c="dimmed">
-              Completed:{" "}
-              {dayjs(chore.completedAt.toDate()).format("MMM D, h:mm A")}
-            </Text>
-          )}
-          {chore.isRecurring && chore.lastInstanceCompletedAt && (
-            <Text size="xs" c="dimmed" fs="italic">
-              (Last done:{" "}
-              {dayjs(chore.lastInstanceCompletedAt.toDate()).format(
-                "MMM D, h:mm A"
-              )}
-              )
-            </Text>
-          )}
-        </Table.Td>
-        <Table.Td>
+          {chore.isRecurring && (
+            <IconRepeat
+              size={16}
+              color="gray"
+              title={`Recurs every ${chore.recurrenceInterval} ${chore.recurrenceType}`}
+            />
+          )}{" "}
+          <Text fw={500} strikethrough={!chore.isRecurring && chore.done}>
+            {chore.title}
+          </Text>{" "}
+        </Group>
+        {chore.isRecurring && chore.nextDueDate && (
+          <Text size="xs" c="dimmed">
+            Due: {dayjs(chore.nextDueDate.toDate()).format("ddd, MMM D")}
+          </Text>
+        )}
+        {!chore.isRecurring && chore.done && chore.completedAt && (
+          <Text size="xs" c="dimmed">
+            Completed:{" "}
+            {dayjs(chore.completedAt.toDate()).format("MMM D, h:mm A")}
+          </Text>
+        )}
+        {chore.isRecurring && chore.lastInstanceCompletedAt && (
+          <Text size="xs" c="dimmed" fs="italic">
+            (Last done:{" "}
+            {dayjs(chore.lastInstanceCompletedAt.toDate()).format(
+              "MMM D, h:mm A"
+            )}
+            )
+          </Text>
+        )}
+      </Table.Td>
+      <Table.Td>
+        {" "}
+        <Group gap="xs" align="center">
           {" "}
-          <Group gap="xs" align="center">
-            {" "}
-            <Avatar
-              color={familyColors[chore.assignedTo] || "gray"}
-              size="sm"
-              radius="xl"
-            >
-              {chore.assignedTo?.substring(0, 2).toUpperCase()}
-            </Avatar>{" "}
-            <Text size="sm">{chore.assignedTo}</Text>{" "}
-          </Group>{" "}
-        </Table.Td>
-        <Table.Td>
-          {!chore.isRecurring && chore.done ? (
-            <Badge color="green">Done</Badge>
-          ) : chore.isRecurring &&
-            chore.nextDueDate &&
-            dayjs(chore.nextDueDate.toDate()).isBefore(today, "day") ? (
-            <Badge color="red" variant="light">
-              Overdue
-            </Badge>
-          ) : chore.isRecurring &&
-            chore.nextDueDate &&
-            dayjs(chore.nextDueDate.toDate()).isSame(today, "day") ? (
-            <Badge color="orange" variant="light">
-              Due Today
-            </Badge>
-          ) : (
-            <Badge color="blue" variant="outline">
-              Pending
-            </Badge>
-          )}
-        </Table.Td>
-        <Table.Td>
+          <Avatar
+            color={familyColors[chore.assignedTo] || "gray"}
+            size="sm"
+            radius="xl"
+          >
+            {chore.assignedTo?.substring(0, 2).toUpperCase()}
+          </Avatar>{" "}
+          <Text size="sm">{chore.assignedTo}</Text>{" "}
+        </Group>{" "}
+      </Table.Td>
+      <Table.Td>
+        {!chore.isRecurring && chore.done ? (
+          <Badge color="green">Done</Badge>
+        ) : chore.isRecurring &&
+          chore.nextDueDate &&
+          dayjs(chore.nextDueDate.toDate()).isBefore(today, "day") ? (
+          <Badge color="red" variant="light">
+            Overdue
+          </Badge>
+        ) : chore.isRecurring &&
+          chore.nextDueDate &&
+          dayjs(chore.nextDueDate.toDate()).isSame(today, "day") ? (
+          <Badge color="orange" variant="light">
+            Due Today
+          </Badge>
+        ) : (
+          <Badge color="blue" variant="outline">
+            Pending
+          </Badge>
+        )}
+      </Table.Td>
+      <Table.Td>
+        {" "}
+        <Group gap="xs">
           {" "}
-          <Group gap="xs">
-            {" "}
-            <ActionIcon
-              variant="light"
-              color="blue"
-              onClick={() => handleOpenModal(chore)}
-              title="Edit Chore"
-            >
-              <IconPencil size={16} />
-            </ActionIcon>{" "}
-            <ActionIcon
-              variant="light"
-              color="red"
-              onClick={() => deleteChore(chore.id)}
-              title="Delete Chore"
-            >
-              <IconTrash size={16} />
-            </ActionIcon>{" "}
-          </Group>{" "}
-        </Table.Td>
-      </Table.Tr>
-    )
-  );
+          <ActionIcon
+            variant="light"
+            color="blue"
+            onClick={() => handleOpenModal(chore)}
+            title="Edit Chore"
+          >
+            <IconPencil size={16} />
+          </ActionIcon>{" "}
+          <ActionIcon
+            variant="light"
+            color="red"
+            onClick={() => deleteChore(chore.id)}
+            title="Delete Chore"
+          >
+            <IconTrash size={16} />
+          </ActionIcon>{" "}
+        </Group>{" "}
+      </Table.Td>
+    </Table.Tr>
+  ));
 
   if (!familyId && !loading) {
     return (

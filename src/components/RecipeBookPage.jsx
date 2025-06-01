@@ -32,7 +32,7 @@ import {
   doc,
 } from "firebase/firestore";
 import AddEditRecipeModal from "./AddEditRecipeModal"; // Assumes this modal will be adapted
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Import useAuth
 
 // const RECIPES_COLLECTION = "recipes"; // Will be nested
 

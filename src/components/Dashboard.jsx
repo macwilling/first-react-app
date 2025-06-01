@@ -37,7 +37,7 @@ import {
   limit,
   doc,
 } from "firebase/firestore";
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Corrected Import Path
 
 dayjs.extend(isSameOrBefore);
 
@@ -45,8 +45,6 @@ const RECENT_DAYS = 7;
 const UPCOMING_DAYS = 7;
 const ITEM_LIMIT = 5;
 
-// Collection names are now paths constructed with familyId
-// const CHORES_COLLECTION = "chores"; // etc.
 const FAMILY_MEAL_PLAN_DOC_ID = "currentFamilyPlan";
 
 export default function Dashboard() {
@@ -70,7 +68,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (!familyId) {
       setLoading(false);
-      // Clear data if no familyId
       setRecentChores([]);
       setUpcomingTasks([]);
       setShoppingSummary({ name: "Shopping List", items: [], totalPending: 0 });
@@ -85,7 +82,6 @@ export default function Dashboard() {
     setError(null);
     let active = true;
     let errorMessages = [];
-
     const basePath = `families/${familyId}`;
 
     const unsubscribers = [
@@ -240,11 +236,9 @@ export default function Dashboard() {
       ),
     ];
 
-    // This is a simplified way to handle combined loading state.
-    // It sets loading to false after a short delay, assuming subscriptions have had a chance to fire.
     const timer = setTimeout(() => {
       if (active) setLoading(false);
-    }, 2000); // Adjust as needed
+    }, 2000);
 
     return () => {
       active = false;
@@ -313,13 +307,14 @@ export default function Dashboard() {
           onClose={() => setError(null)}
           m="md"
         >
-          {`Could not load some dashboard data. Failed sections: ${error}`}
+          {" "}
+          {`Could not load some dashboard data. Failed sections: ${error}`}{" "}
         </Alert>
       )}
       <Grid>
-        {/* Recently Completed Chores */}
         <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
           <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
+            {" "}
             <Group mb="md">
               {" "}
               <ThemeIcon size="lg" variant="light" color="teal">
@@ -327,7 +322,7 @@ export default function Dashboard() {
                 <IconListCheck size={24} />{" "}
               </ThemeIcon>{" "}
               <Title order={3}>Recent Chores</Title>{" "}
-            </Group>
+            </Group>{" "}
             {recentChores.length > 0 ? (
               <List spacing="sm" size="sm">
                 {recentChores.map((chore) => (
@@ -354,13 +349,12 @@ export default function Dashboard() {
               </List>
             ) : !loading && (!error || !error.includes("Chores")) ? (
               <Text c="dimmed">No chores completed recently.</Text>
-            ) : null}
+            ) : null}{" "}
           </Paper>
         </Grid.Col>
-
-        {/* Upcoming Maintenance */}
         <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
           <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
+            {" "}
             <Group mb="md">
               {" "}
               <ThemeIcon size="lg" variant="light" color="cyan">
@@ -368,7 +362,7 @@ export default function Dashboard() {
                 <IconTool size={24} />{" "}
               </ThemeIcon>{" "}
               <Title order={3}>Upcoming Maintenance</Title>{" "}
-            </Group>
+            </Group>{" "}
             {upcomingTasks.length > 0 ? (
               <List spacing="sm" size="sm">
                 {upcomingTasks.map((task) => (
@@ -396,13 +390,12 @@ export default function Dashboard() {
               </List>
             ) : !loading && (!error || !error.includes("Maintenance")) ? (
               <Text c="dimmed">No upcoming maintenance tasks.</Text>
-            ) : null}
+            ) : null}{" "}
           </Paper>
         </Grid.Col>
-
-        {/* Shopping List Quick View */}
         <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
           <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
+            {" "}
             <Group mb="md">
               {" "}
               <ThemeIcon size="lg" variant="light" color="orange">
@@ -410,7 +403,7 @@ export default function Dashboard() {
                 <IconShoppingCart size={24} />{" "}
               </ThemeIcon>{" "}
               <Title order={3}>{shoppingSummary.name}</Title>{" "}
-            </Group>
+            </Group>{" "}
             {shoppingSummary.items.length > 0 ? (
               <List spacing="xs" size="sm">
                 {shoppingSummary.items.map((item) => (
@@ -443,13 +436,12 @@ export default function Dashboard() {
               </Text>
             ) : !loading && (!error || !error.includes("Shopping")) ? (
               <Text c="dimmed">No pending items or lists.</Text>
-            ) : null}
+            ) : null}{" "}
           </Paper>
         </Grid.Col>
-
-        {/* Meal Plan Quick View */}
         <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
           <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
+            {" "}
             <Group mb="md">
               {" "}
               <ThemeIcon size="lg" variant="light" color="lime">
@@ -457,7 +449,7 @@ export default function Dashboard() {
                 <IconToolsKitchen2 size={24} />{" "}
               </ThemeIcon>{" "}
               <Title order={3}>Meals for Today</Title>{" "}
-            </Group>
+            </Group>{" "}
             {mealPlanToday.length > 0 ? (
               <List spacing="xs" size="sm">
                 {mealPlanToday.map((meal) => (
@@ -468,7 +460,7 @@ export default function Dashboard() {
               </List>
             ) : !loading && (!error || !error.includes("Meal Plan")) ? (
               <Text c="dimmed">No meals planned for today.</Text>
-            ) : null}
+            ) : null}{" "}
             {mealPlanTomorrow.length > 0 && (
               <>
                 <Divider my="sm" label="Tomorrow" labelPosition="center" />
@@ -480,13 +472,12 @@ export default function Dashboard() {
                   ))}
                 </List>
               </>
-            )}
+            )}{" "}
           </Paper>
         </Grid.Col>
-
-        {/* Notes Quick View */}
         <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
           <Paper shadow="md" p="lg" radius="md" withBorder h="100%">
+            {" "}
             <Group mb="md">
               {" "}
               <ThemeIcon size="lg" variant="light" color="yellow">
@@ -494,7 +485,7 @@ export default function Dashboard() {
                 <IconNote size={24} />{" "}
               </ThemeIcon>{" "}
               <Title order={3}>Recent Notes</Title>{" "}
-            </Group>
+            </Group>{" "}
             {recentNotesList.length > 0 ? (
               <Stack gap="xs">
                 {recentNotesList.map((note) => (
@@ -516,7 +507,7 @@ export default function Dashboard() {
               </Stack>
             ) : !loading && (!error || !error.includes("Notes")) ? (
               <Text c="dimmed">No notes yet.</Text>
-            ) : null}
+            ) : null}{" "}
           </Paper>
         </Grid.Col>
       </Grid>

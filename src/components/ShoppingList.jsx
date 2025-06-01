@@ -39,7 +39,7 @@ import {
   arrayRemove,
 } from "firebase/firestore";
 import { nanoid } from "nanoid";
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Import useAuth
 
 // No longer a top-level collection name, will be nested under families.
 // const SHOPPING_LISTS_COLLECTION = "shoppingLists";

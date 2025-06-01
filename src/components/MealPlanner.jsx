@@ -49,18 +49,16 @@ import {
 import { useDraggable } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
 import SelectRecipeModal from "./SelectRecipeModal";
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Corrected Import Path
 
 dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
 
-// const RECIPES_COLLECTION_ID = "recipes"; // Now nested
-// const MEAL_PLANS_COLLECTION_ID = "mealPlans"; // Now nested
-const FAMILY_MEAL_PLAN_DOC_ID = "currentFamilyPlan"; // This will be the ID within the family's mealPlans subcollection
-
+const FAMILY_MEAL_PLAN_DOC_ID = "currentFamilyPlan";
 const FIXED_DAY_WIDTH_DESKTOP = 230;
 
 const getDaysInWeek = (date) => {
+  /* ... same ... */
   const days = [];
   const startOfWeek = dayjs(date).startOf("week");
   for (let i = 0; i < 7; i++) {
@@ -70,6 +68,7 @@ const getDaysInWeek = (date) => {
 };
 
 function DraggableRecipeItem({ recipe }) {
+  /* ... same ... */
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: `recipe-${recipe.id}`,
@@ -113,6 +112,7 @@ function DraggableRecipeItem({ recipe }) {
 }
 
 function RecipeDiscoveryPanel({ recipes, isMobile }) {
+  /* ... same ... */
   const [searchTerm, setSearchTerm] = useState("");
   if (isMobile) return null;
   const filteredRecipes = recipes.filter((recipe) =>
@@ -125,16 +125,18 @@ function RecipeDiscoveryPanel({ recipes, isMobile }) {
       withBorder
       style={{ height: "100%", display: "flex", flexDirection: "column" }}
     >
+      {" "}
       <Title order={4} mb="md">
         Discover Recipes
-      </Title>
+      </Title>{" "}
       <TextInput
         placeholder="Search recipes..."
         value={searchTerm}
         onChange={(event) => setSearchTerm(event.currentTarget.value)}
         mb="md"
-      />
+      />{" "}
       <ScrollArea style={{ flexGrow: 1, minHeight: 0 }}>
+        {" "}
         {filteredRecipes.length > 0 ? (
           filteredRecipes.map((recipe) => (
             <DraggableRecipeItem key={recipe.id} recipe={recipe} />
@@ -143,8 +145,8 @@ function RecipeDiscoveryPanel({ recipes, isMobile }) {
           <Text size="sm" c="dimmed" ta="center" mt="md">
             No recipes found.
           </Text>
-        )}
-      </ScrollArea>
+        )}{" "}
+      </ScrollArea>{" "}
     </Paper>
   );
 }
@@ -157,6 +159,7 @@ function DayColumn({
   allRecipes = [],
   onDeletePlannedRecipe,
 }) {
+  /* ... same ... */
   const { setNodeRef, isOver } = useDroppable({
     id: `day-${dateString}`,
     data: { date: dateString, type: "day" },
@@ -196,7 +199,9 @@ function DayColumn({
           : undefined
       }
     >
+      {" "}
       <Group justify="space-between" align="center" mb="sm">
+        {" "}
         <Box>
           <Text size="sm" ta="center" fw={500}>
             {dayjs(dateString).format("ddd")}
@@ -204,7 +209,7 @@ function DayColumn({
           <Text size="xs" ta="center" c="dimmed">
             {dayjs(dateString).format("MMM D")}
           </Text>
-        </Box>
+        </Box>{" "}
         {isMobile && (
           <ActionIcon
             variant="light"
@@ -215,9 +220,10 @@ function DayColumn({
           >
             <IconPlus size={18} />
           </ActionIcon>
-        )}
-      </Group>
+        )}{" "}
+      </Group>{" "}
       <ScrollArea style={{ flexGrow: 1, minHeight: isMobile ? 80 : 0 }}>
+        {" "}
         {plannedRecipesForDay.map((meal) => {
           const recipeDetails = allRecipes.find((r) => r.id === meal.recipeId);
           const title = recipeDetails
@@ -234,9 +240,10 @@ function DayColumn({
               bg="var(--mantine-color-gray-0)"
               style={{ position: "relative" }}
             >
+              {" "}
               <Text size="sm" truncate>
                 {title}
-              </Text>
+              </Text>{" "}
               <ActionIcon
                 color="red"
                 variant="subtle"
@@ -249,16 +256,16 @@ function DayColumn({
                 title="Remove meal"
               >
                 <IconTrash size={12} />
-              </ActionIcon>
+              </ActionIcon>{" "}
             </Paper>
           );
-        })}
+        })}{" "}
         {plannedRecipesForDay.length === 0 && (
           <Text c="dimmed" ta="center" size="xs" p="md">
             {isMobile ? "- Tap + to add recipes -" : "- Drag recipes here -"}
           </Text>
-        )}
-      </ScrollArea>
+        )}{" "}
+      </ScrollArea>{" "}
     </Box>
   );
 }
@@ -271,6 +278,7 @@ function WeeklyCalendarView({
   onDeletePlannedRecipe,
   allRecipes,
 }) {
+  /* ... same ... */
   const daysOfWeek = getDaysInWeek(week);
   const scrollContainerRef = useRef(null);
   const [showLeftScroll, setShowLeftScroll] = useState(false);
@@ -316,12 +324,13 @@ function WeeklyCalendarView({
         position: "relative",
       }}
     >
+      {" "}
       <Group justify="space-between" align="center" mb="md">
         <Title order={4}>
           {dayjs(daysOfWeek[0]).format("MMM D")} -{" "}
-          {dayjs(daysOfWeek[6]).format("MMM D, YYYY")}
+          {dayjs(daysOfWeek[6]).format("MMM D,gggg")}
         </Title>
-      </Group>
+      </Group>{" "}
       {!isMobile && showLeftScroll && (
         <ActionIcon
           variant="filled"
@@ -339,7 +348,7 @@ function WeeklyCalendarView({
         >
           <IconChevronLeft />
         </ActionIcon>
-      )}
+      )}{" "}
       {!isMobile && showRightScroll && (
         <ActionIcon
           variant="filled"
@@ -357,7 +366,7 @@ function WeeklyCalendarView({
         >
           <IconChevronRight />
         </ActionIcon>
-      )}
+      )}{" "}
       <Box
         ref={scrollContainerRef}
         style={{
@@ -368,6 +377,7 @@ function WeeklyCalendarView({
           paddingRight: !isMobile ? "var(--mantine-spacing-xl)" : undefined,
         }}
       >
+        {" "}
         <Box
           style={{
             display: isMobile ? "block" : "flex",
@@ -376,6 +386,7 @@ function WeeklyCalendarView({
               : `${daysOfWeek.length * FIXED_DAY_WIDTH_DESKTOP}px`,
           }}
         >
+          {" "}
           {daysOfWeek.map((day) => {
             const dateString = day.format("YYYY-MM-DD");
             const recipesForThisDay = plannedMeals[dateString] || [];
@@ -391,6 +402,7 @@ function WeeklyCalendarView({
                   marginBottom: isMobile ? "var(--mantine-spacing-md)" : 0,
                 }}
               >
+                {" "}
                 <DayColumn
                   dateString={dateString}
                   isMobile={isMobile}
@@ -398,12 +410,12 @@ function WeeklyCalendarView({
                   plannedRecipesForDay={recipesForThisDay}
                   allRecipes={allRecipes}
                   onDeletePlannedRecipe={onDeletePlannedRecipe}
-                />
+                />{" "}
               </Box>
             );
-          })}
-        </Box>
-      </Box>
+          })}{" "}
+        </Box>{" "}
+      </Box>{" "}
     </Paper>
   );
 }
@@ -437,10 +449,10 @@ export default function MealPlanner() {
   useEffect(() => {
     if (!familyId) {
       setAllRecipes([]);
-      // Do not set loading true if there's no familyId, wait for meal plan effect
+      // setIsLoading(true); // Let meal plan listener handle initial loading state if no familyId
       return;
     }
-    // setIsLoading(true); // Handled by combined loading
+    // setIsLoading(true); // Combined with meal plan loading
     setError(null);
     const recipesCollectionPath = `families/${familyId}/recipes`;
     const q = query(
@@ -469,7 +481,7 @@ export default function MealPlanner() {
   useEffect(() => {
     if (!familyId) {
       setPlannedMeals({});
-      setIsLoading(false);
+      setIsLoading(false); // Only set loading false here if no familyId
       return;
     }
     setIsLoading(true);
@@ -505,7 +517,6 @@ export default function MealPlanner() {
         setError("Cannot save plan: No family selected.");
         return;
       }
-      // setError(null); // Cleared by useEffects mostly
       const mealPlanDocPath = `families/${familyId}/mealPlans/${FAMILY_MEAL_PLAN_DOC_ID}`;
       try {
         const planDocRef = doc(db, mealPlanDocPath);
@@ -513,7 +524,7 @@ export default function MealPlanner() {
           planDocRef,
           { meals: newPlanData, updatedAt: serverTimestamp() },
           { merge: true }
-        ); // Merge true to create if not exists
+        );
       } catch (err) {
         console.error("Error saving meal plan:", err);
         setError(
@@ -529,23 +540,6 @@ export default function MealPlanner() {
     setCurrentDate((prev) => prev.subtract(1, "week"));
   const handleGoToToday = () => setCurrentDate(dayjs());
 
-  function handleDragStart(event) {
-    /* ... same ... */
-  }
-  function handleDragEnd(event) {
-    /* ... same, calls savePlanToFirestore ... */
-  }
-  const handleOpenModalForDate = (dateString) => {
-    /* ... same ... */
-  };
-  const handleRecipeSelectFromModal = (selectedRecipe) => {
-    /* ... same, calls savePlanToFirestore ... */
-  };
-  const handleDeletePlannedRecipe = (dateString, mealInstanceId) => {
-    /* ... same, calls savePlanToFirestore ... */
-  };
-
-  // Re-paste handlers with savePlanToFirestore (ensure they use the useCallback version)
   function handleDragStart(event) {
     if (isMobile || !familyId) return;
     const { active } = event;

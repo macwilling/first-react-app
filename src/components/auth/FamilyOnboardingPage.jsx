@@ -43,21 +43,28 @@ export default function FamilyOnboardingPage() {
 
     try {
       // Create a new family document
-      const familyRef = await addDoc(collection(db, "families"), {
+      const familyData = {
         name: familyName.trim(),
         createdBy: currentUser.uid,
         createdAt: serverTimestamp(),
-      });
+        members: {
+          // Add the current user to the members map
+          [currentUser.uid]: true, // Or a role, e.g., 'admin'
+        },
+      };
+
+      const familyRef = await addDoc(collection(db, "families"), familyData); // Use the updated familyData
 
       // Update user profile with familyId
       const userDocRef = doc(db, "users", currentUser.uid);
       await setDoc(userDocRef, { familyId: familyRef.id }, { merge: true });
 
       // Optionally update UI or redirect here
+      // Example: navigate to a dashboard or the family page
     } catch (err) {
-      console.error("Error creating family:", err);
-      setError("Failed to create family.");
-      setAuthError(err.message);
+      console.error("Error creating family:", err); // This is where your error is caught
+      setError("Failed to create family. Please check console for details."); // More specific error for user
+      setAuthError(err.message); // Set auth error if needed
     }
 
     setLoadingCreate(false);

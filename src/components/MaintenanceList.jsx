@@ -44,7 +44,7 @@ import {
   Timestamp,
   serverTimestamp,
 } from "firebase/firestore";
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Corrected Import Path
 
 const recurrenceTypes = [
   { value: "days", label: "Day(s)" },
@@ -52,8 +52,6 @@ const recurrenceTypes = [
   { value: "months", label: "Month(s)" },
   { value: "years", label: "Year(s)" },
 ];
-
-// const TASKS_COLLECTION = "maintenanceTasks"; // Will be nested
 
 export default function MaintenanceList() {
   const { familyId } = useAuth();
@@ -82,7 +80,7 @@ export default function MaintenanceList() {
     const q = query(
       collection(db, tasksCollectionPath),
       orderBy("createdAt", "desc")
-    ); // Or by dueDate
+    );
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
@@ -111,6 +109,7 @@ export default function MaintenanceList() {
   }, [familyId]);
 
   const handleOpenModal = (taskToEdit = null) => {
+    /* ... same ... */
     if (taskToEdit) {
       setEditingTask(taskToEdit);
       setNewTask({
@@ -134,6 +133,7 @@ export default function MaintenanceList() {
   };
 
   const handleSubmitTask = async () => {
+    /* ... same, uses tasksCollectionPath ... */
     if (!familyId) {
       setError("Cannot save task: No family selected.");
       return;
@@ -142,7 +142,6 @@ export default function MaintenanceList() {
       setError("Task title cannot be empty.");
       return;
     }
-
     setLoading(true);
     setError(null);
     const tasksCollectionPath = `families/${familyId}/maintenanceTasks`;
@@ -153,7 +152,6 @@ export default function MaintenanceList() {
         : null,
       isRecurring: newTask.isRecurring,
     };
-
     if (newTask.isRecurring) {
       taskDataPayload.recurrenceInterval = Math.max(
         1,
@@ -164,7 +162,6 @@ export default function MaintenanceList() {
       taskDataPayload.recurrenceInterval = null;
       taskDataPayload.recurrenceType = null;
     }
-
     try {
       if (editingTask && editingTask.id) {
         const taskRef = doc(db, tasksCollectionPath, editingTask.id);
@@ -184,6 +181,7 @@ export default function MaintenanceList() {
   };
 
   const deleteTaskFirestore = async (taskId) => {
+    /* ... same, uses familyId in path ... */
     if (!familyId) {
       setError("Cannot delete task: No family selected.");
       return;
@@ -202,12 +200,13 @@ export default function MaintenanceList() {
   };
 
   const markNonRecurringAsDone = async (taskId) =>
-    await deleteTaskFirestore(taskId); // For non-recurring, done means delete
+    await deleteTaskFirestore(taskId);
 
   const calculateNextDueDateFromToday = (interval, type) =>
     dayjs().add(interval, type).valueOf();
 
   const handleCompleteAndReschedule = async (taskToReschedule) => {
+    /* ... same, uses familyId in path ... */
     if (!familyId || !taskToReschedule.isRecurring || !taskToReschedule.id)
       return;
     setLoading(true);
@@ -233,7 +232,7 @@ export default function MaintenanceList() {
   };
 
   const getDueDateBadge = (firestoreTimestamp) => {
-    /* ... same logic ... */
+    /* ... same ... */
     if (!firestoreTimestamp) return <Badge color="gray">No Date</Badge>;
     const date = dayjs(firestoreTimestamp.toDate());
     const today = dayjs().startOf("day");
@@ -262,8 +261,9 @@ export default function MaintenanceList() {
     );
   };
 
-  const rows = tasks.map((task /* ... same row rendering logic ... */) => (
+  const rows = tasks.map((task /* ... same ... */) => (
     <Table.Tr key={task.id}>
+      {" "}
       <Table.Td>
         <Group gap="xs">
           {task.isRecurring && (
@@ -275,17 +275,19 @@ export default function MaintenanceList() {
           )}
           <Text fw={500}>{task.title}</Text>
         </Group>
-      </Table.Td>
+      </Table.Td>{" "}
       <Table.Td>
         {getDueDateBadge(task.dueDate)}
         {task.dueDate && (
           <Text size="xs" c="dimmed" ml={task.dueDate ? "xs" : 0}>
-            {dayjs(task.dueDate.toDate()).format("ddd, MMM D, YYYY")}
+            {dayjs(task.dueDate.toDate()).format("ddd, MMM D,gggg")}
           </Text>
         )}
-      </Table.Td>
+      </Table.Td>{" "}
       <Table.Td>
+        {" "}
         <Group gap="xs">
+          {" "}
           {task.isRecurring ? (
             <ActionIcon
               variant="light"
@@ -304,7 +306,7 @@ export default function MaintenanceList() {
             >
               <IconCheck size={16} />
             </ActionIcon>
-          )}
+          )}{" "}
           <ActionIcon
             variant="light"
             color="blue"
@@ -312,7 +314,7 @@ export default function MaintenanceList() {
             title="Edit Task"
           >
             <IconPencil size={16} />
-          </ActionIcon>
+          </ActionIcon>{" "}
           <ActionIcon
             variant="light"
             color="red"
@@ -320,9 +322,9 @@ export default function MaintenanceList() {
             title="Delete Task"
           >
             <IconTrash size={16} />
-          </ActionIcon>
-        </Group>
-      </Table.Td>
+          </ActionIcon>{" "}
+        </Group>{" "}
+      </Table.Td>{" "}
     </Table.Tr>
   ));
 
@@ -383,7 +385,7 @@ export default function MaintenanceList() {
             placeholder="Pick a date"
             value={newTask.dueDate}
             onChange={(value) => setNewTask({ ...newTask, dueDate: value })}
-            valueFormat="MMM D, YYYY"
+            valueFormat="MMM D,gggg"
             clearable
             popoverProps={{ withinPortal: true }}
           />
@@ -399,6 +401,7 @@ export default function MaintenanceList() {
           />
           {newTask.isRecurring && (
             <Group grow>
+              {" "}
               <NumberInput
                 label="Repeats every"
                 value={newTask.recurrenceInterval}
@@ -410,7 +413,7 @@ export default function MaintenanceList() {
                 }
                 min={1}
                 step={1}
-              />
+              />{" "}
               <Select
                 label="Period"
                 data={recurrenceTypes}
@@ -419,7 +422,7 @@ export default function MaintenanceList() {
                   setNewTask({ ...newTask, recurrenceType: value || "months" })
                 }
                 allowDeselect={false}
-              />
+              />{" "}
             </Group>
           )}
           <Button

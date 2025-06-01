@@ -36,7 +36,7 @@ import {
   deleteDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { useAuth } from "../../contexts/AuthContext"; // Import useAuth
+import { useAuth } from "../contexts/AuthContext"; // Import useAuth
 
 // const NOTES_COLLECTION = "notes"; // Will be nested
 
