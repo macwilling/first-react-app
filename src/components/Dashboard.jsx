@@ -35,7 +35,8 @@ import {
   orderBy,
   onSnapshot,
   limit,
-} from "firebase/firestore";
+  doc,
+} from "firebase/firestore"; // Added 'doc' here
 
 dayjs.extend(isSameOrBefore);
 
@@ -70,6 +71,8 @@ export default function Dashboard() {
 
   // Combined loading effect
   useEffect(() => {
+    let active = true; // Flag to prevent state updates if component unmounts
+
     const choresUnsub = onSnapshot(
       query(
         collection(db, CHORES_COLLECTION),
@@ -77,6 +80,7 @@ export default function Dashboard() {
         limit(ITEM_LIMIT * 2)
       ),
       (snapshot) => {
+        if (!active) return;
         const choresData = snapshot.docs
           .map((doc) => ({ ...doc.data(), id: doc.id }))
           .filter(
@@ -91,8 +95,9 @@ export default function Dashboard() {
         setRecentChores(choresData);
       },
       (err) => {
+        if (!active) return;
         console.error("Chores error: ", err);
-        setError((prev) => prev + " Chores fetch failed.");
+        setError((prev) => (prev ? prev + " | " : "") + "Chores fetch failed.");
       }
     );
 
@@ -103,6 +108,7 @@ export default function Dashboard() {
         limit(ITEM_LIMIT * 2)
       ),
       (snapshot) => {
+        if (!active) return;
         const tasksData = snapshot.docs
           .map((doc) => ({ ...doc.data(), id: doc.id }))
           .filter(
@@ -114,8 +120,9 @@ export default function Dashboard() {
         setUpcomingTasks(tasksData);
       },
       (err) => {
+        if (!active) return;
         console.error("Tasks error: ", err);
-        setError((prev) => prev + " Tasks fetch failed.");
+        setError((prev) => (prev ? prev + " | " : "") + "Tasks fetch failed.");
       }
     );
 
@@ -126,6 +133,7 @@ export default function Dashboard() {
         limit(1)
       ), // Assuming first list is primary
       (snapshot) => {
+        if (!active) return;
         if (!snapshot.empty) {
           const primaryList = {
             ...snapshot.docs[0].data(),
@@ -148,27 +156,35 @@ export default function Dashboard() {
         }
       },
       (err) => {
+        if (!active) return;
         console.error("Shopping error: ", err);
-        setError((prev) => prev + " Shopping List fetch failed.");
+        setError(
+          (prev) => (prev ? prev + " | " : "") + "Shopping List fetch failed."
+        );
       }
     );
 
     const recipesUnsub = onSnapshot(
       query(collection(db, RECIPES_COLLECTION), orderBy("title", "asc")),
       (snapshot) => {
+        if (!active) return;
         setAllRecipes(
           snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }))
         );
       },
       (err) => {
+        if (!active) return;
         console.error("Recipes error: ", err);
-        setError((prev) => prev + " Recipes fetch failed.");
+        setError(
+          (prev) => (prev ? prev + " | " : "") + "Recipes fetch failed."
+        );
       }
     );
 
     const mealPlanUnsub = onSnapshot(
-      doc(db, MEAL_PLANS_COLLECTION, FAMILY_MEAL_PLAN_DOC_ID),
+      doc(db, MEAL_PLANS_COLLECTION, FAMILY_MEAL_PLAN_DOC_ID), // 'doc' is now defined
       (docSnap) => {
+        if (!active) return;
         if (docSnap.exists()) {
           const plan = docSnap.data().meals || {};
           const todayStr = dayjs().format("YYYY-MM-DD");
@@ -181,8 +197,11 @@ export default function Dashboard() {
         }
       },
       (err) => {
+        if (!active) return;
         console.error("Meal plan error: ", err);
-        setError((prev) => prev + " Meal Plan fetch failed.");
+        setError(
+          (prev) => (prev ? prev + " | " : "") + "Meal Plan fetch failed."
+        );
       }
     );
 
@@ -193,28 +212,41 @@ export default function Dashboard() {
         limit(ITEM_LIMIT)
       ),
       (snapshot) => {
+        if (!active) return;
         setRecentNotesList(
           snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }))
         );
       },
       (err) => {
+        if (!active) return;
         console.error("Notes error: ", err);
-        setError((prev) => prev + " Notes fetch failed.");
+        setError((prev) => (prev ? prev + " | " : "") + "Notes fetch failed.");
       }
     );
 
-    // Determine overall loading state
-    // This is a simplified version; for more precise loading, track each subscription.
-    Promise.all([
-      new Promise((res) => (choresUnsub ? res() : null)), // These won't really "resolve" in a traditional sense here
-      new Promise((res) => (tasksUnsub ? res() : null)),
-      new Promise((res) => (shoppingUnsub ? res() : null)),
-      new Promise((res) => (mealPlanUnsub ? res() : null)),
-      new Promise((res) => (notesUnsub ? res() : null)),
-      new Promise((res) => (recipesUnsub ? res() : null)),
-    ]).finally(() => setLoading(false));
+    // Simplified loading management: set loading to false once all subscriptions are attempted.
+    // For a more robust solution, you might track loading state for each data type.
+    const allSubscriptionsAttempted = [
+      choresUnsub,
+      tasksUnsub,
+      shoppingUnsub,
+      mealPlanUnsub,
+      notesUnsub,
+      recipesUnsub,
+    ];
+
+    // Wait a short moment for subscriptions to potentially fetch initial data or error out.
+    // This is a heuristic. A more complex setup might involve Promise.allSettled with getDoc calls
+    // for initial load, then attach onSnapshot.
+    const timer = setTimeout(() => {
+      if (active) {
+        setLoading(false);
+      }
+    }, 1500); // Adjust timeout as needed
 
     return () => {
+      active = false; // Prevent state updates on unmounted component
+      clearTimeout(timer);
       choresUnsub();
       tasksUnsub();
       shoppingUnsub();
@@ -311,7 +343,8 @@ export default function Dashboard() {
                   </List.Item>
                 ))}
               </List>
-            ) : !loading ? (
+            ) : !loading &&
+              (!error || !error.includes("Chores fetch failed")) ? ( // Check if not loading and no specific error for this section
               <Text c="dimmed">No chores completed recently.</Text>
             ) : null}
           </Paper>
@@ -351,7 +384,8 @@ export default function Dashboard() {
                   </List.Item>
                 ))}
               </List>
-            ) : !loading ? (
+            ) : !loading &&
+              (!error || !error.includes("Tasks fetch failed")) ? (
               <Text c="dimmed">No upcoming maintenance tasks.</Text>
             ) : null}
           </Paper>
@@ -370,7 +404,7 @@ export default function Dashboard() {
               <List spacing="xs" size="sm">
                 {shoppingSummary.items.map((item) => (
                   <List.Item
-                    key={item.id}
+                    key={item.id} // Assuming items in shopping list have unique IDs
                     icon={
                       <IconCircleDashed size={14} style={{ marginTop: 4 }} />
                     }
@@ -390,11 +424,14 @@ export default function Dashboard() {
                   </Text>
                 )}
               </List>
-            ) : shoppingSummary.totalPending === 0 && !loading ? (
+            ) : shoppingSummary.totalPending === 0 &&
+              !loading &&
+              (!error || !error.includes("Shopping List fetch failed")) ? (
               <Text c="dimmed">
                 All items bought from {shoppingSummary.name}!
               </Text>
-            ) : !loading ? (
+            ) : !loading &&
+              (!error || !error.includes("Shopping List fetch failed")) ? (
               <Text c="dimmed">No pending items or lists.</Text>
             ) : null}
           </Paper>
@@ -417,7 +454,8 @@ export default function Dashboard() {
                   </List.Item>
                 ))}
               </List>
-            ) : !loading ? (
+            ) : !loading &&
+              (!error || !error.includes("Meal Plan fetch failed")) ? (
               <Text c="dimmed">No meals planned for today.</Text>
             ) : null}
 
@@ -464,7 +502,8 @@ export default function Dashboard() {
                   </Paper>
                 ))}
               </Stack>
-            ) : !loading ? (
+            ) : !loading &&
+              (!error || !error.includes("Notes fetch failed")) ? (
               <Text c="dimmed">No notes yet.</Text>
             ) : null}
           </Paper>
