@@ -1,5 +1,5 @@
 // src/components/ShoppingList.jsx
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Paper,
   Title,
@@ -13,49 +13,78 @@ import {
   Text,
   Accordion,
   Box,
-  Select,
   Textarea,
+  LoadingOverlay,
+  Alert,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import {
   IconPlus,
   IconTrash,
   IconPencil,
-  IconShoppingCart,
+  IconAlertCircle,
 } from "@tabler/icons-react";
+import { db } from "../firebase"; // Your Firebase config
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+  arrayUnion,
+  arrayRemove,
+} from "firebase/firestore";
+import { nanoid } from "nanoid"; // For unique item IDs within an array
 
-const initialLists = [
-  {
-    id: "groceries",
-    name: "Groceries",
-    items: [
-      { id: Date.now(), text: "Milk", notes: "", quantity: 1, done: false },
-    ],
-  },
-  { id: "hardware", name: "Hardware Store", items: [] },
-];
+const SHOPPING_LISTS_COLLECTION = "shoppingLists";
 
-export default function ShoppingList({
-  shoppingListsData,
-  setShoppingListsData,
-}) {
-  const [lists, setLists] = useState(shoppingListsData || initialLists);
+export default function ShoppingList() {
+  const [lists, setLists] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
   const [openedListModal, { open: openListModal, close: closeListModal }] =
     useDisclosure(false);
   const [openedItemModal, { open: openItemModal, close: closeItemModal }] =
     useDisclosure(false);
 
-  const [currentListId, setCurrentListId] = useState(null);
-  const [editingList, setEditingList] = useState(null);
+  const [currentListId, setCurrentListId] = useState(null); // Firestore document ID of the list
+  const [editingList, setEditingList] = useState(null); // Full list object for editing
   const [newListName, setNewListName] = useState("");
 
-  const [editingItem, setEditingItem] = useState(null);
-  const [newItem, setNewItem] = useState({ text: "", quantity: 1, notes: "" });
+  const [editingItem, setEditingItem] = useState(null); // Item object for editing
+  const [newItem, setNewItem] = useState({ text: "", quantity: "", notes: "" });
 
-  const handleListChange = (updatedLists) => {
-    setLists(updatedLists);
-    setShoppingListsData(updatedLists);
-  };
+  // Fetch Shopping Lists from Firestore
+  useEffect(() => {
+    setLoading(true);
+    const q = query(
+      collection(db, SHOPPING_LISTS_COLLECTION),
+      orderBy("createdAt", "asc") // Or 'name'
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const listsData = [];
+        querySnapshot.forEach((doc) => {
+          listsData.push({ ...doc.data(), id: doc.id });
+        });
+        setLists(listsData);
+        setLoading(false);
+      },
+      (err) => {
+        console.error("Error fetching shopping lists: ", err);
+        setError("Failed to load shopping lists.");
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
 
   // List Management
   const handleOpenListModal = (listToEdit = null) => {
@@ -69,24 +98,48 @@ export default function ShoppingList({
     openListModal();
   };
 
-  const handleSubmitList = () => {
-    if (editingList) {
-      handleListChange(
-        lists.map((list) =>
-          list.id === editingList.id ? { ...list, name: newListName } : list
-        )
-      );
-    } else {
-      handleListChange([
-        ...lists,
-        { id: Date.now().toString(), name: newListName, items: [] },
-      ]);
+  const handleSubmitList = async () => {
+    if (!newListName.trim()) {
+      setError("List name cannot be empty.");
+      return;
     }
-    closeListModal();
+    setLoading(true);
+    setError(null);
+    try {
+      if (editingList) {
+        const listRef = doc(db, SHOPPING_LISTS_COLLECTION, editingList.id);
+        await updateDoc(listRef, { name: newListName });
+      } else {
+        await addDoc(collection(db, SHOPPING_LISTS_COLLECTION), {
+          name: newListName,
+          items: [],
+          createdAt: serverTimestamp(),
+        });
+      }
+      closeListModal();
+    } catch (err) {
+      console.error("Error saving list: ", err);
+      setError("Failed to save list.");
+    }
+    setLoading(false);
   };
 
-  const deleteList = (listId) => {
-    handleListChange(lists.filter((list) => list.id !== listId));
+  const deleteList = async (listId) => {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this list and all its items?"
+      )
+    ) {
+      setLoading(true);
+      setError(null);
+      try {
+        await deleteDoc(doc(db, SHOPPING_LISTS_COLLECTION, listId));
+      } catch (err) {
+        console.error("Error deleting list: ", err);
+        setError("Failed to delete list.");
+      }
+      setLoading(false);
+    }
   };
 
   // Item Management
@@ -96,66 +149,119 @@ export default function ShoppingList({
       setEditingItem(itemToEdit);
       setNewItem({
         text: itemToEdit.text,
-        quantity: itemToEdit.quantity || 1,
+        quantity: itemToEdit.quantity || "",
         notes: itemToEdit.notes || "",
       });
     } else {
       setEditingItem(null);
-      setNewItem({ text: "", quantity: 1, notes: "" });
+      setNewItem({ text: "", quantity: "", notes: "" });
     }
     openItemModal();
   };
 
-  const handleSubmitItem = () => {
-    const updatedLists = lists.map((list) => {
-      if (list.id === currentListId) {
-        let updatedItems;
-        if (editingItem) {
-          updatedItems = list.items.map((item) =>
-            item.id === editingItem.id ? { ...editingItem, ...newItem } : item
+  const handleSubmitItem = async () => {
+    if (!newItem.text.trim()) {
+      // setError is not directly visible in item modal, consider modal-specific error state
+      alert("Item name cannot be empty.");
+      return;
+    }
+    setLoading(true); // Potentially use a different loading state for item operations
+    const listRef = doc(db, SHOPPING_LISTS_COLLECTION, currentListId);
+    try {
+      if (editingItem) {
+        // To edit an item in an array, we need to remove the old and add the new.
+        // This requires finding the specific item in the current list's items array.
+        const listDoc = lists.find((l) => l.id === currentListId);
+        if (listDoc) {
+          const itemToUpdate = listDoc.items.find(
+            (i) => i.id === editingItem.id
           );
-        } else {
-          updatedItems = [
-            ...list.items,
-            { ...newItem, id: Date.now(), done: false },
-          ];
+          if (itemToUpdate) {
+            await updateDoc(listRef, {
+              items: arrayRemove(itemToUpdate), // Remove the old item
+            });
+            await updateDoc(listRef, {
+              items: arrayUnion({ ...itemToUpdate, ...newItem }), // Add the updated item
+            });
+          }
         }
-        return { ...list, items: updatedItems };
+      } else {
+        await updateDoc(listRef, {
+          items: arrayUnion({ ...newItem, id: nanoid(8), done: false }),
+        });
       }
-      return list;
-    });
-    handleListChange(updatedLists);
-    closeItemModal();
+      closeItemModal();
+    } catch (err) {
+      console.error("Error saving item: ", err);
+      // Consider modal-specific error display
+      alert("Failed to save item.");
+    }
+    setLoading(false);
   };
 
-  const toggleItemDone = (listId, itemId) => {
-    const updatedLists = lists.map((list) => {
-      if (list.id === listId) {
-        const updatedItems = list.items.map((item) =>
-          item.id === itemId ? { ...item, done: !item.done } : item
-        );
-        return { ...list, items: updatedItems };
+  const toggleItemDone = async (listId, itemId) => {
+    setLoading(true);
+    const listRef = doc(db, SHOPPING_LISTS_COLLECTION, listId);
+    const listDoc = lists.find((l) => l.id === listId);
+    if (listDoc) {
+      const itemToToggle = listDoc.items.find((i) => i.id === itemId);
+      if (itemToToggle) {
+        const updatedItem = { ...itemToToggle, done: !itemToToggle.done };
+        try {
+          await updateDoc(listRef, { items: arrayRemove(itemToToggle) });
+          await updateDoc(listRef, { items: arrayUnion(updatedItem) });
+        } catch (err) {
+          console.error("Error toggling item: ", err);
+          alert("Failed to update item status.");
+        }
       }
-      return list;
-    });
-    handleListChange(updatedLists);
+    }
+    setLoading(false);
   };
 
-  const deleteItem = (listId, itemId) => {
-    const updatedLists = lists.map((list) => {
-      if (list.id === listId) {
-        return {
-          ...list,
-          items: list.items.filter((item) => item.id !== itemId),
-        };
+  const deleteItem = async (listId, itemId) => {
+    setLoading(true);
+    const listRef = doc(db, SHOPPING_LISTS_COLLECTION, listId);
+    const listDoc = lists.find((l) => l.id === listId);
+    if (listDoc) {
+      const itemToDelete = listDoc.items.find((i) => i.id === itemId);
+      if (itemToDelete) {
+        try {
+          await updateDoc(listRef, { items: arrayRemove(itemToDelete) });
+        } catch (err) {
+          console.error("Error deleting item: ", err);
+          alert("Failed to delete item.");
+        }
       }
-      return list;
-    });
-    handleListChange(updatedLists);
+    }
+    setLoading(false);
   };
 
   return (
-    <Paper shadow="md" p="lg" radius="md" withBorder>
+    <Paper
+      shadow="md"
+      p="lg"
+      radius="md"
+      withBorder
+      style={{ position: "relative" }}
+    >
+      <LoadingOverlay
+        visible={loading && !error}
+        overlayProps={{ radius: "sm", blur: 2 }}
+      />
+      {error && (
+        <Alert
+          icon={<IconAlertCircle size="1rem" />}
+          title="Error"
+          color="red"
+          withCloseButton
+          onClose={() => setError(null)}
+          m="md"
+        >
+          {error}
+        </Alert>
+      )}
+
       <Modal
         opened={openedListModal}
         onClose={closeListModal}
@@ -170,7 +276,12 @@ export default function ShoppingList({
             onChange={(e) => setNewListName(e.currentTarget.value)}
             data-autofocus
           />
-          <Button onClick={handleSubmitList} fullWidth mt="md">
+          <Button
+            onClick={handleSubmitList}
+            fullWidth
+            mt="md"
+            loading={loading}
+          >
             {editingList ? "Save Changes" : "Add List"}
           </Button>
         </Stack>
@@ -193,8 +304,8 @@ export default function ShoppingList({
             data-autofocus
           />
           <TextInput
-            label="Quantity"
-            placeholder="e.g., 1 bag"
+            label="Quantity / Details"
+            placeholder="e.g., 1 bag, Whole wheat"
             value={newItem.quantity}
             onChange={(e) =>
               setNewItem({ ...newItem, quantity: e.currentTarget.value })
@@ -208,7 +319,12 @@ export default function ShoppingList({
               setNewItem({ ...newItem, notes: e.currentTarget.value })
             }
           />
-          <Button onClick={handleSubmitItem} fullWidth mt="md">
+          <Button
+            onClick={handleSubmitItem}
+            fullWidth
+            mt="md"
+            loading={loading}
+          >
             {editingItem ? "Save Changes" : "Add Item"}
           </Button>
         </Stack>
@@ -225,7 +341,7 @@ export default function ShoppingList({
       </Group>
 
       {lists.length > 0 ? (
-        <Accordion defaultValue={lists[0]?.id}>
+        <Accordion defaultValue={lists[0]?.id} chevronPosition="left">
           {lists.map((list) => (
             <Accordion.Item key={list.id} value={list.id}>
               <Accordion.Control>
@@ -233,28 +349,28 @@ export default function ShoppingList({
                   <Text fw={500}>{list.name}</Text>
                   <Group gap="xs">
                     <ActionIcon
-                      variant="light"
+                      variant="subtle"
                       color="blue"
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleOpenListModal(list);
                       }}
+                      title="Edit list name"
                     >
-                      {" "}
-                      <IconPencil size={14} />{" "}
+                      <IconPencil size={16} />
                     </ActionIcon>
                     <ActionIcon
-                      variant="light"
+                      variant="subtle"
                       color="red"
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
                         deleteList(list.id);
                       }}
+                      title="Delete list"
                     >
-                      {" "}
-                      <IconTrash size={14} />{" "}
+                      <IconTrash size={16} />
                     </ActionIcon>
                   </Group>
                 </Group>
@@ -269,55 +385,73 @@ export default function ShoppingList({
                 >
                   Add Item to {list.name}
                 </Button>
-                {list.items.length > 0 ? (
-                  list.items.map((item) => (
-                    <Paper
-                      key={item.id}
-                      p="xs"
-                      mb="xs"
-                      withBorder
-                      radius="sm"
-                      bg={item.done ? "gray.1" : "white"}
-                    >
-                      <Group justify="space-between">
-                        <Checkbox
-                          checked={item.done}
-                          onChange={() => toggleItemDone(list.id, item.id)}
-                          label={
-                            <Box>
-                              <Text strikethrough={item.done}>
-                                {item.text}{" "}
-                                {item.quantity && `(${item.quantity})`}
-                              </Text>
-                              {item.notes && (
-                                <Text size="xs" c="dimmed">
-                                  {item.notes}
+                {list.items && list.items.length > 0 ? (
+                  // Sort items: not done first, then by text
+                  list.items
+                    .sort((a, b) => {
+                      if (a.done !== b.done) {
+                        return a.done ? 1 : -1;
+                      }
+                      return a.text.localeCompare(b.text);
+                    })
+                    .map((item) => (
+                      <Paper
+                        key={item.id}
+                        p="xs"
+                        mb="xs"
+                        withBorder
+                        radius="sm"
+                        bg={
+                          item.done
+                            ? "var(--mantine-color-gray-1)"
+                            : "var(--mantine-color-body)"
+                        }
+                      >
+                        <Group justify="space-between">
+                          <Checkbox
+                            checked={item.done}
+                            onChange={() => toggleItemDone(list.id, item.id)}
+                            label={
+                              <Box>
+                                <Text strikethrough={item.done}>
+                                  {item.text}{" "}
+                                  {item.quantity && `(${item.quantity})`}
                                 </Text>
-                              )}
-                            </Box>
-                          }
-                        />
-                        <Group gap="xs">
-                          <ActionIcon
-                            variant="subtle"
-                            color="blue"
-                            onClick={() => handleOpenItemModal(list.id, item)}
-                          >
-                            <IconPencil size={16} />
-                          </ActionIcon>
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            onClick={() => deleteItem(list.id, item.id)}
-                          >
-                            <IconTrash size={16} />
-                          </ActionIcon>
+                                {item.notes && (
+                                  <Text
+                                    size="xs"
+                                    c="dimmed"
+                                    style={{ whiteSpace: "pre-wrap" }}
+                                  >
+                                    {item.notes}
+                                  </Text>
+                                )}
+                              </Box>
+                            }
+                          />
+                          <Group gap="xs">
+                            <ActionIcon
+                              variant="subtle"
+                              color="blue"
+                              onClick={() => handleOpenItemModal(list.id, item)}
+                              title="Edit item"
+                            >
+                              <IconPencil size={16} />
+                            </ActionIcon>
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              onClick={() => deleteItem(list.id, item.id)}
+                              title="Delete item"
+                            >
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Group>
                         </Group>
-                      </Group>
-                    </Paper>
-                  ))
+                      </Paper>
+                    ))
                 ) : (
-                  <Text size="sm" c="dimmed">
+                  <Text size="sm" c="dimmed" mt="sm">
                     No items in this list yet.
                   </Text>
                 )}
@@ -325,11 +459,11 @@ export default function ShoppingList({
             </Accordion.Item>
           ))}
         </Accordion>
-      ) : (
-        <Text c="dimmed" align="center" mt="xl">
+      ) : !loading ? (
+        <Text c="dimmed" ta="center" mt="xl">
           No shopping lists yet. Create one to get started!
         </Text>
-      )}
+      ) : null}
     </Paper>
   );
 }

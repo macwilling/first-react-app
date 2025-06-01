@@ -1,5 +1,5 @@
 // src/components/NotesBoard.jsx
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Paper,
   Title,
@@ -14,55 +14,86 @@ import {
   Card,
   Textarea,
   ColorInput,
+  LoadingOverlay,
+  Alert,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconPlus, IconTrash, IconPencil, IconNote } from "@tabler/icons-react";
+import {
+  IconPlus,
+  IconTrash,
+  IconPencil,
+  IconAlertCircle,
+} from "@tabler/icons-react";
+import { db } from "../firebase"; // Your Firebase config
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 
-const initialNotes = [
-  {
-    id: 1,
-    title: "WiFi Password",
-    content: "SuperSecret123!",
-    color: "yellow.3",
-  },
-  {
-    id: 2,
-    title: "Emergency Contacts",
-    content: "Mom: 555-1234\nDad: 555-5678",
-    color: "pink.3",
-  },
-];
+const NOTES_COLLECTION = "notes";
 
 const MANTINE_COLORS = [
-  "gray.3",
-  "red.3",
-  "pink.3",
-  "grape.3",
-  "violet.3",
-  "indigo.3",
-  "blue.3",
-  "cyan.3",
-  "teal.3",
-  "green.3",
-  "lime.3",
-  "yellow.3",
-  "orange.3",
+  "var(--mantine-color-gray-3)",
+  "var(--mantine-color-red-3)",
+  "var(--mantine-color-pink-3)",
+  "var(--mantine-color-grape-3)",
+  "var(--mantine-color-violet-3)",
+  "var(--mantine-color-indigo-3)",
+  "var(--mantine-color-blue-3)",
+  "var(--mantine-color-cyan-3)",
+  "var(--mantine-color-teal-3)",
+  "var(--mantine-color-green-3)",
+  "var(--mantine-color-lime-3)",
+  "var(--mantine-color-yellow-3)",
+  "var(--mantine-color-orange-3)",
 ];
 
-export default function NotesBoard({ notesData, setNotesData }) {
-  const [notes, setNotes] = useState(notesData || initialNotes);
+export default function NotesBoard() {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
   const [opened, { open, close }] = useDisclosure(false);
-  const [editingNote, setEditingNote] = useState(null);
+  const [editingNote, setEditingNote] = useState(null); // Full note object for editing
   const [newNote, setNewNote] = useState({
     title: "",
     content: "",
     color: MANTINE_COLORS[0],
   });
 
-  const handleDataChange = (updatedNotes) => {
-    setNotes(updatedNotes);
-    setNotesData(updatedNotes);
-  };
+  // Fetch Notes from Firestore
+  useEffect(() => {
+    setLoading(true);
+    const q = query(
+      collection(db, NOTES_COLLECTION),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const notesData = [];
+        querySnapshot.forEach((doc) => {
+          notesData.push({ ...doc.data(), id: doc.id });
+        });
+        setNotes(notesData);
+        setLoading(false);
+      },
+      (err) => {
+        console.error("Error fetching notes: ", err);
+        setError("Failed to load notes.");
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
 
   const handleOpenModal = (noteToEdit = null) => {
     if (noteToEdit) {
@@ -84,25 +115,75 @@ export default function NotesBoard({ notesData, setNotesData }) {
     open();
   };
 
-  const handleSubmitNote = () => {
-    if (editingNote) {
-      handleDataChange(
-        notes.map((note) =>
-          note.id === editingNote.id ? { ...editingNote, ...newNote } : note
-        )
-      );
-    } else {
-      handleDataChange([...notes, { ...newNote, id: Date.now() }]);
+  const handleSubmitNote = async () => {
+    if (!newNote.title.trim() && !newNote.content.trim()) {
+      setError("Note title or content cannot be empty.");
+      return;
     }
-    close();
+    setLoading(true);
+    setError(null);
+    const notePayload = {
+      title: newNote.title,
+      content: newNote.content,
+      color: newNote.color,
+    };
+
+    try {
+      if (editingNote) {
+        const noteRef = doc(db, NOTES_COLLECTION, editingNote.id);
+        await updateDoc(noteRef, notePayload);
+      } else {
+        await addDoc(collection(db, NOTES_COLLECTION), {
+          ...notePayload,
+          createdAt: serverTimestamp(),
+        });
+      }
+      close();
+    } catch (err) {
+      console.error("Error saving note: ", err);
+      setError("Failed to save note.");
+    }
+    setLoading(false);
   };
 
-  const deleteNote = (id) => {
-    handleDataChange(notes.filter((note) => note.id !== id));
+  const deleteNote = async (noteId) => {
+    if (window.confirm("Are you sure you want to delete this note?")) {
+      setLoading(true);
+      setError(null);
+      try {
+        await deleteDoc(doc(db, NOTES_COLLECTION, noteId));
+      } catch (err) {
+        console.error("Error deleting note: ", err);
+        setError("Failed to delete note.");
+      }
+      setLoading(false);
+    }
   };
 
   return (
-    <Paper shadow="md" p="lg" radius="md" withBorder>
+    <Paper
+      shadow="md"
+      p="lg"
+      radius="md"
+      withBorder
+      style={{ position: "relative" }}
+    >
+      <LoadingOverlay
+        visible={loading && !error}
+        overlayProps={{ radius: "sm", blur: 2 }}
+      />
+      {error && (
+        <Alert
+          icon={<IconAlertCircle size="1rem" />}
+          title="Error"
+          color="red"
+          withCloseButton
+          onClose={() => setError(null)}
+          m="md"
+        >
+          {error}
+        </Alert>
+      )}
       <Modal
         opened={opened}
         onClose={close}
@@ -134,9 +215,14 @@ export default function NotesBoard({ notesData, setNotesData }) {
             value={newNote.color}
             onChange={(value) => setNewNote({ ...newNote, color: value })}
             swatches={MANTINE_COLORS}
-            format="hex" // Store as hex, Mantine can handle it for bg
+            format="hex"
           />
-          <Button onClick={handleSubmitNote} fullWidth mt="md">
+          <Button
+            onClick={handleSubmitNote}
+            fullWidth
+            mt="md"
+            loading={loading}
+          >
             {editingNote ? "Save Changes" : "Add Note"}
           </Button>
         </Stack>
@@ -153,7 +239,7 @@ export default function NotesBoard({ notesData, setNotesData }) {
       </Group>
 
       {notes.length > 0 ? (
-        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }} spacing="md">
           {notes.map((note) => (
             <Card
               key={note.id}
@@ -161,28 +247,32 @@ export default function NotesBoard({ notesData, setNotesData }) {
               padding="lg"
               radius="md"
               withBorder
-              style={{
-                backgroundColor: `var(--mantine-color-${note.color.replace(
-                  ".",
-                  "-"
-                )})`,
-              }}
+              style={{ backgroundColor: note.color }}
             >
-              <Card.Section withBorder inheritPadding py="xs">
+              <Card.Section
+                withBorder
+                inheritPadding
+                py="xs"
+                style={{ borderColor: "rgba(0,0,0,0.1)" }}
+              >
                 <Group justify="space-between">
-                  <Text fw={500}>{note.title}</Text>
+                  <Text fw={500} truncate>
+                    {note.title || "Untitled Note"}
+                  </Text>
                   <Group gap="xs">
                     <ActionIcon
-                      variant="transparent"
+                      variant="subtle"
                       color="dark"
                       onClick={() => handleOpenModal(note)}
+                      title="Edit note"
                     >
                       <IconPencil size={16} />
                     </ActionIcon>
                     <ActionIcon
-                      variant="transparent"
+                      variant="subtle"
                       color="dark"
                       onClick={() => deleteNote(note.id)}
+                      title="Delete note"
                     >
                       <IconTrash size={16} />
                     </ActionIcon>
@@ -195,11 +285,11 @@ export default function NotesBoard({ notesData, setNotesData }) {
             </Card>
           ))}
         </SimpleGrid>
-      ) : (
-        <Text c="dimmed" align="center" mt="xl">
+      ) : !loading ? (
+        <Text c="dimmed" ta="center" mt="xl">
           No notes yet. Add some to get started!
         </Text>
-      )}
+      ) : null}
     </Paper>
   );
 }

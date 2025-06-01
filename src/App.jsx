@@ -1,6 +1,8 @@
 // src/App.jsx
-import { useState, useEffect } from "react";
-import dayjs from "dayjs";
+import React, {
+  useState, // No longer need useEffect for localStorage here
+} from "react";
+// import dayjs from "dayjs"; // Not directly used here anymore
 import {
   AppShell,
   Burger,
@@ -8,6 +10,11 @@ import {
   NavLink,
   Title,
   ScrollArea,
+  Text,
+  Box,
+  Avatar,
+  UnstyledButton,
+  Divider,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -17,95 +24,55 @@ import {
   IconShoppingCart,
   IconToolsKitchen2,
   IconNote,
-  IconBook2, // <-- New Icon for Recipe Book
+  IconBook2,
+  IconSettings,
 } from "@tabler/icons-react";
+
+const appVersion = import.meta.env.VITE_APP_VERSION || "0.0.0";
 
 import ChoreList from "./components/ChoreList";
 import MaintenanceList from "./components/MaintenanceList";
 import Dashboard from "./components/Dashboard";
-import ShoppingList from "./components/ShoppingList";
+import ShoppingList from "./components/ShoppingList"; // Will manage its own data
 import MealPlanner from "./components/MealPlanner";
-import NotesBoard from "./components/NotesBoard";
-import RecipeBookPage from "./components/RecipeBookPage"; // <-- New Component Import
+import NotesBoard from "./components/NotesBoard"; // Will manage its own data
+import RecipeBookPage from "./components/RecipeBookPage";
 
-// Keep other initial data for components not yet refactored
-const initialShoppingLists = [
+// Initial data and localStorage logic for shoppingLists and notes are removed
+// as components will handle their own data via Firestore.
+
+const navSections = [
   {
-    id: "groceries",
-    name: "Groceries",
-    items: [
-      {
-        id: Date.now() + 1,
-        text: "Milk",
-        notes: "",
-        quantity: "1 gallon",
-        done: false,
-      },
-      {
-        id: Date.now() + 2,
-        text: "Bread",
-        notes: "Whole wheat",
-        quantity: "1 loaf",
-        done: true,
-      },
+    label: "Overview",
+    links: [{ icon: IconHome, label: "Dashboard", view: "dashboard" }],
+  },
+  {
+    label: "Household Tasks",
+    links: [
+      { icon: IconListCheck, label: "Chore Tracker", view: "chores" },
+      { icon: IconTool, label: "Maintenance", view: "maintenance" },
     ],
   },
-  { id: "hardware", name: "Hardware Store", items: [] },
-];
-const initialMealPlan = {
-  [dayjs().format("YYYY-MM-DD")]: [
-    { id: Date.now() + 5, type: "Breakfast", description: "Cereal and Fruit" },
-    { id: Date.now() + 6, type: "Lunch", description: "Sandwiches" },
-    { id: Date.now() + 7, type: "Dinner", description: "Chicken Stir-fry" },
-  ],
-};
-const initialNotes = [
   {
-    id: Date.now() + 9,
-    title: "Weekend Ideas",
-    content: "- Park visit\n- Board games",
-    color: "yellow.3",
+    label: "Kitchen & Food",
+    links: [
+      { icon: IconBook2, label: "Recipe Book", view: "recipes" },
+      { icon: IconToolsKitchen2, label: "Meal Planner", view: "meals" },
+      { icon: IconShoppingCart, label: "Shopping Lists", view: "shopping" },
+    ],
+  },
+  {
+    label: "Utilities",
+    links: [{ icon: IconNote, label: "Notes Board", view: "notes" }],
   },
 ];
 
 export default function App() {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure();
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(true);
-  const [activeView, setActiveView] = useState("dashboard"); // Default to dashboard
+  const [activeView, setActiveView] = useState("dashboard");
 
-  // States for components still using localStorage
-  const [shoppingLists, setShoppingLists] = useState(() => {
-    const saved = localStorage.getItem("familyShoppingLists");
-    return saved ? JSON.parse(saved) : initialShoppingLists;
-  });
-  const [mealPlan, setMealPlan] = useState(() => {
-    const saved = localStorage.getItem("familyMealPlan");
-    return saved ? JSON.parse(saved) : initialMealPlan;
-  });
-  const [notes, setNotes] = useState(() => {
-    const saved = localStorage.getItem("familyNotes");
-    return saved ? JSON.parse(saved) : initialNotes;
-  });
-
-  useEffect(() => {
-    localStorage.setItem("familyShoppingLists", JSON.stringify(shoppingLists));
-  }, [shoppingLists]);
-  useEffect(() => {
-    localStorage.setItem("familyMealPlan", JSON.stringify(mealPlan));
-  }, [mealPlan]);
-  useEffect(() => {
-    localStorage.setItem("familyNotes", JSON.stringify(notes));
-  }, [notes]);
-
-  const navLinks = [
-    { icon: IconHome, label: "Dashboard", view: "dashboard" },
-    { icon: IconListCheck, label: "Chore Tracker", view: "chores" },
-    { icon: IconTool, label: "Maintenance", view: "maintenance" },
-    { icon: IconBook2, label: "Recipe Book", view: "recipes" }, // <-- New NavLink
-    { icon: IconToolsKitchen2, label: "Meal Planner", view: "meals" },
-    { icon: IconShoppingCart, label: "Shopping Lists", view: "shopping" },
-    { icon: IconNote, label: "Notes Board", view: "notes" },
-  ];
+  // shoppingLists and notes state, and their useEffects for localStorage, are removed.
 
   const renderView = () => {
     switch (activeView) {
@@ -113,30 +80,19 @@ export default function App() {
         return <ChoreList />;
       case "maintenance":
         return <MaintenanceList />;
-      case "recipes": // <-- New Case
+      case "recipes":
         return <RecipeBookPage />;
       case "meals":
-        return (
-          <MealPlanner mealPlanData={mealPlan} setMealPlanData={setMealPlan} />
-        ); // Will be refactored
+        return <MealPlanner />;
       case "shopping":
-        return (
-          <ShoppingList
-            shoppingListsData={shoppingLists}
-            setShoppingListsData={setShoppingLists}
-          />
-        ); // Will be refactored
+        return <ShoppingList />; // No longer needs props for data
       case "notes":
-        return <NotesBoard notesData={notes} setNotesData={setNotes} />; // Will be refactored
+        return <NotesBoard />; // No longer needs props for data
       case "dashboard":
       default:
-        return (
-          <Dashboard
-            shoppingLists={shoppingLists}
-            mealPlan={mealPlan}
-            notes={notes}
-          />
-        );
+        // Dashboard will now fetch its own data directly from Firestore
+        // or from a shared context if that pattern is adopted later.
+        return <Dashboard />;
     }
   };
 
@@ -165,32 +121,72 @@ export default function App() {
               visibleFrom="sm"
               size="sm"
             />
+            {/* Consider making "Family Dashboard" dynamic or based on app name */}
             <Title order={3}>Family Dashboard</Title>
           </Group>
+          {/* User profile/settings icon can go here if needed */}
         </Group>
       </AppShell.Header>
 
       <AppShell.Navbar p="md">
+        <Box mb="md">
+          <UnstyledButton style={{ width: "100%" }}>
+            <Group>
+              <Avatar color="blue" radius="sm">
+                {/* Placeholder Icon - replace with your actual logo/icon component if you have one */}
+                <IconSettings size="1.5rem" />
+              </Avatar>
+              <div style={{ flex: 1 }}>
+                <Text size="sm" fw={500}>
+                  FamPlanner {/* Or your app's name */}
+                </Text>
+                <Text c="dimmed" size="xs">
+                  v{appVersion}
+                </Text>
+              </div>
+            </Group>
+          </UnstyledButton>
+        </Box>
+        <Divider mb="md" />
+
         <AppShell.Section grow component={ScrollArea}>
-          {navLinks.map((link) => (
-            <NavLink
-              key={link.label}
-              href="#"
-              label={link.label}
-              leftSection={<link.icon size={18} />}
-              active={activeView === link.view}
-              onClick={(event) => {
-                event.preventDefault();
-                setActiveView(link.view);
-                if (mobileOpened) toggleMobile();
-              }}
-              variant="filled"
-              tt="capitalize"
-            />
+          {navSections.map((section) => (
+            <Box key={section.label} mb="md">
+              {section.label && (
+                <Text
+                  size="xs"
+                  tt="uppercase"
+                  c="dimmed"
+                  fw={700}
+                  mb="xs"
+                  ml="xs" // Slight indent for section labels
+                >
+                  {section.label}
+                </Text>
+              )}
+              {section.links.map((link) => (
+                <NavLink
+                  key={link.label}
+                  href="#" // Consider routing if this becomes a larger SPA
+                  label={link.label}
+                  leftSection={<link.icon size={18} stroke={1.5} />}
+                  active={activeView === link.view}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setActiveView(link.view);
+                    if (mobileOpened) toggleMobile(); // Close mobile nav on selection
+                  }}
+                  variant="filled" // Or "light", "subtle" depending on theme preference
+                  radius="sm" // Rounded corners for NavLinks
+                />
+              ))}
+            </Box>
           ))}
         </AppShell.Section>
+        {/* Footer in Navbar can go here if needed */}
       </AppShell.Navbar>
-      <AppShell.Main> {renderView()}</AppShell.Main>
+
+      <AppShell.Main>{renderView()}</AppShell.Main>
     </AppShell>
   );
 }

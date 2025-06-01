@@ -1,5 +1,5 @@
 // src/components/MealPlanner.jsx
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Grid,
   Paper,
@@ -12,6 +12,8 @@ import {
   ActionIcon,
   Box,
   useMantineTheme,
+  LoadingOverlay,
+  Alert, // Added for error display
 } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import {
@@ -20,12 +22,26 @@ import {
   IconCalendarEvent,
   IconPlus,
   IconTrash,
-} from "@tabler/icons-react"; // Added IconTrash
+  IconAlertCircle, // Added for error display
+} from "@tabler/icons-react";
 import dayjs from "dayjs";
 import weekOfYear from "dayjs/plugin/weekOfYear";
 import isoWeek from "dayjs/plugin/isoWeek";
-import { db } from "../firebase";
-import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
+
+// Firebase imports: db from your firebase.js, specific functions from firestore
+import { db } from "../firebase"; // Correctly points to src/firebase.js
+import {
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  serverTimestamp,
+  // getDoc, // No longer needed for meal plan fetching
+} from "firebase/firestore";
+
+// DND Kit Imports
 import {
   DndContext,
   DragOverlay,
@@ -34,23 +50,23 @@ import {
   useSensor,
   useSensors,
   closestCenter,
-  // For sortable (if we add reordering planned meals later)
-  // SortableContext,
-  // useSortable,
-  // arrayMove,
-  // verticalListSortingStrategy,
 } from "@dnd-kit/core";
 import { useDraggable } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
-import SelectRecipeModal from "./SelectRecipeModal";
+
+import SelectRecipeModal from "./SelectRecipeModal"; //
 
 dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
 
-const RECIPES_COLLECTION = "recipes";
-const FIXED_DAY_WIDTH_DESKTOP = 230; // Increased slightly
-const SCROLL_AMOUNT_DESKTOP = FIXED_DAY_WIDTH_DESKTOP * 2;
+const RECIPES_COLLECTION_ID = "recipes"; // Using original collection ID
+const MEAL_PLANS_COLLECTION_ID = "mealPlans"; // Using original collection ID
+const FAMILY_MEAL_PLAN_DOC_ID = "currentFamilyPlan";
 
+const FIXED_DAY_WIDTH_DESKTOP = 230;
+// const SCROLL_AMOUNT_DESKTOP = FIXED_DAY_WIDTH_DESKTOP * 2; // Not directly used, but can be if scroll buttons have fixed amounts
+
+// --- Helper: Get Days in Week (no change) ---
 const getDaysInWeek = (date) => {
   const days = [];
   const startOfWeek = dayjs(date).startOf("week");
@@ -60,20 +76,23 @@ const getDaysInWeek = (date) => {
   return days;
 };
 
-// --- Draggable Recipe Item (Desktop only - no change from previous version) ---
+// --- Draggable Recipe Item (Desktop only - no change from your structure) ---
 function DraggableRecipeItem({ recipe }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: `recipe-${recipe.id}`,
       data: { type: "recipe", recipe },
     });
+
   const style = transform
     ? {
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-        zIndex: isDragging ? 100 : "auto",
+        zIndex: isDragging ? 1000 : "auto",
         cursor: isDragging ? "grabbing" : "grab",
+        opacity: isDragging ? 0.8 : 1,
       }
     : { cursor: "grab" };
+
   const content = (
     <>
       <Text size="sm" fw={500} truncate>
@@ -86,28 +105,13 @@ function DraggableRecipeItem({ recipe }) {
       )}
     </>
   );
-  if (isDragging) {
-    return (
-      <Paper
-        ref={setNodeRef}
-        p="sm"
-        mb="xs"
-        shadow="xs"
-        withBorder
-        style={{ ...style, opacity: 0.5 }}
-        {...listeners}
-        {...attributes}
-      >
-        {content}
-      </Paper>
-    );
-  }
+
   return (
     <Paper
       ref={setNodeRef}
       p="sm"
       mb="xs"
-      shadow="xs"
+      shadow={isDragging ? "xl" : "xs"}
       withBorder
       style={style}
       {...listeners}
@@ -118,13 +122,15 @@ function DraggableRecipeItem({ recipe }) {
   );
 }
 
-// --- Recipe Discovery Panel (Desktop only - no change) ---
+// --- Recipe Discovery Panel (Desktop only - no change from your structure) ---
 function RecipeDiscoveryPanel({ recipes, isMobile }) {
   const [searchTerm, setSearchTerm] = useState("");
   if (isMobile) return null;
+
   const filteredRecipes = recipes.filter((recipe) =>
     recipe.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
   return (
     <Paper
       shadow="sm"
@@ -136,7 +142,7 @@ function RecipeDiscoveryPanel({ recipes, isMobile }) {
         Discover Recipes
       </Title>
       <TextInput
-        placeholder="Search recipes by title..."
+        placeholder="Search recipes..."
         value={searchTerm}
         onChange={(event) => setSearchTerm(event.currentTarget.value)}
         mb="md"
@@ -147,7 +153,7 @@ function RecipeDiscoveryPanel({ recipes, isMobile }) {
             <DraggableRecipeItem key={recipe.id} recipe={recipe} />
           ))
         ) : (
-          <Text size="sm" c="dimmed">
+          <Text size="sm" c="dimmed" ta="center" mt="md">
             No recipes found.
           </Text>
         )}
@@ -159,14 +165,15 @@ function RecipeDiscoveryPanel({ recipes, isMobile }) {
 // --- Day Column (Droppable for Desktop, Clickable area for Mobile) ---
 function DayColumn({
   dateString,
-  children,
   isMobile,
   onDayClick,
   plannedRecipesForDay = [],
+  allRecipes = [],
+  onDeletePlannedRecipe,
 }) {
   const { setNodeRef, isOver } = useDroppable({
-    id: `day-${dateString}`, // ID is now just the date
-    data: { date: dateString, type: "day" }, // type: 'day' to differentiate from recipes if needed
+    id: `day-${dateString}`,
+    data: { date: dateString, type: "day" },
     disabled: isMobile,
   });
 
@@ -179,20 +186,23 @@ function DayColumn({
   return (
     <Box
       ref={setNodeRef}
-      onClick={dayClickHandler} // Click whole day area on mobile
+      onClick={dayClickHandler}
       style={{
         border:
           !isMobile && isOver
             ? "2px dashed var(--mantine-color-blue-6)"
-            : "1px solid var(--mantine-color-gray-2)", // Solid border for days
+            : "1px solid var(--mantine-color-gray-3)",
         backgroundColor:
-          !isMobile && isOver ? "var(--mantine-color-blue-0)" : "transparent",
-        minHeight: isMobile ? 150 : 380, // Shorter minHeight for mobile if needed, or 'auto'
-        borderRadius: "var(--mantine-radius-md)", // Rounded days
+          !isMobile && isOver
+            ? "var(--mantine-color-blue-0)"
+            : "var(--mantine-color-body)",
+        minHeight: isMobile ? 150 : 380,
+        borderRadius: "var(--mantine-radius-md)",
         display: "flex",
         flexDirection: "column",
         padding: "var(--mantine-spacing-xs)",
         cursor: isMobile ? "pointer" : "default",
+        transition: "background-color 0.2s ease, border-color 0.2s ease",
       }}
       sx={
         isMobile
@@ -224,9 +234,46 @@ function DayColumn({
         )}
       </Group>
       <ScrollArea style={{ flexGrow: 1, minHeight: isMobile ? 80 : 0 }}>
-        {" "}
-        {/* Scroll if many recipes in a day */}
-        {children}
+        {plannedRecipesForDay.map((meal) => {
+          const recipeDetails = allRecipes.find((r) => r.id === meal.recipeId);
+          const title = recipeDetails
+            ? recipeDetails.title
+            : "Recipe not found";
+          return (
+            <Paper
+              key={meal.instanceId}
+              p="xs"
+              my="xs"
+              shadow="xs"
+              withBorder
+              radius="sm"
+              bg="var(--mantine-color-gray-0)"
+              style={{ position: "relative" }}
+            >
+              <Text size="sm" truncate>
+                {title}
+              </Text>
+              <ActionIcon
+                color="red"
+                variant="subtle"
+                size="xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeletePlannedRecipe(dateString, meal.instanceId);
+                }}
+                style={{ position: "absolute", top: 2, right: 2 }}
+                title="Remove meal"
+              >
+                <IconTrash size={12} />
+              </ActionIcon>
+            </Paper>
+          );
+        })}
+        {plannedRecipesForDay.length === 0 && (
+          <Text c="dimmed" ta="center" size="xs" p="md">
+            {isMobile ? "- Tap + to add recipes -" : "- Drag recipes here -"}
+          </Text>
+        )}
       </ScrollArea>
     </Box>
   );
@@ -239,23 +286,24 @@ function WeeklyCalendarView({
   isMobile,
   onDayClick,
   onDeletePlannedRecipe,
+  allRecipes,
 }) {
   const daysOfWeek = getDaysInWeek(week);
   const scrollContainerRef = useRef(null);
   const [showLeftScroll, setShowLeftScroll] = useState(false);
   const [showRightScroll, setShowRightScroll] = useState(true);
 
-  const handleScroll = () => {
-    /* ... (same as before) ... */ if (scrollContainerRef.current) {
+  const handleScroll = useCallback(() => {
+    if (scrollContainerRef.current) {
       const { scrollLeft, scrollWidth, clientWidth } =
         scrollContainerRef.current;
       setShowLeftScroll(scrollLeft > 5);
       setShowRightScroll(scrollLeft < scrollWidth - clientWidth - 5);
     }
-  };
+  }, []);
+
   useEffect(() => {
-    /* ... (same as before, respecting isMobile) ... */ const container =
-      scrollContainerRef.current;
+    const container = scrollContainerRef.current;
     if (container && !isMobile) {
       container.addEventListener("scroll", handleScroll, { passive: true });
       handleScroll();
@@ -265,12 +313,16 @@ function WeeklyCalendarView({
       setShowLeftScroll(false);
       setShowRightScroll(false);
     }
-  }, [week, isMobile]);
-  const scrollLeft = () => {
-    /* ... (same) ... */
-  };
-  const scrollRight = () => {
-    /* ... (same) ... */
+  }, [week, isMobile, handleScroll]);
+
+  const scroll = (direction) => {
+    if (scrollContainerRef.current) {
+      const scrollAmount = FIXED_DAY_WIDTH_DESKTOP * 2 * direction;
+      scrollContainerRef.current.scrollBy({
+        left: scrollAmount,
+        behavior: "smooth",
+      });
+    }
   };
 
   return (
@@ -296,14 +348,13 @@ function WeeklyCalendarView({
         <ActionIcon
           variant="filled"
           color="gray"
-          onClick={scrollLeft}
+          onClick={() => scroll(-1)}
           style={{
             position: "absolute",
-            left: 0,
+            left: 8,
             top: "50%",
             transform: "translateY(-50%)",
             zIndex: 20,
-            boxShadow: "var(--mantine-shadow-md)",
           }}
           radius="xl"
           size="lg"
@@ -315,14 +366,13 @@ function WeeklyCalendarView({
         <ActionIcon
           variant="filled"
           color="gray"
-          onClick={scrollRight}
+          onClick={() => scroll(1)}
           style={{
             position: "absolute",
-            right: 0,
+            right: 8,
             top: "50%",
             transform: "translateY(-50%)",
             zIndex: 20,
-            boxShadow: "var(--mantine-shadow-md)",
           }}
           radius="xl"
           size="lg"
@@ -335,10 +385,10 @@ function WeeklyCalendarView({
         ref={scrollContainerRef}
         style={{
           overflowX: isMobile ? "hidden" : "auto",
-          overflowY: isMobile ? "auto" : "hidden",
+          overflowY: "hidden",
           flexGrow: 1,
-          paddingLeft: !isMobile ? "var(--mantine-spacing-md)" : undefined,
-          paddingRight: !isMobile ? "var(--mantine-spacing-md)" : undefined,
+          paddingLeft: !isMobile ? "var(--mantine-spacing-xl)" : undefined,
+          paddingRight: !isMobile ? "var(--mantine-spacing-xl)" : undefined,
         }}
       >
         <Box
@@ -357,7 +407,7 @@ function WeeklyCalendarView({
                 key={dateString}
                 style={{
                   minWidth: isMobile ? "100%" : `${FIXED_DAY_WIDTH_DESKTOP}px`,
-                  flexShrink: isMobile ? 1 : 0,
+                  flexShrink: 0,
                   padding: isMobile
                     ? `0 0 var(--mantine-spacing-xs) 0`
                     : `0 var(--mantine-spacing-xs)`,
@@ -369,47 +419,9 @@ function WeeklyCalendarView({
                   isMobile={isMobile}
                   onDayClick={onDayClick}
                   plannedRecipesForDay={recipesForThisDay}
-                >
-                  {recipesForThisDay.map((meal) => (
-                    <Paper
-                      key={meal.id}
-                      p="xs"
-                      my="xs"
-                      shadow="xs"
-                      withBorder
-                      radius="sm"
-                      bg="var(--mantine-color-gray-0)"
-                      style={{ position: "relative" }}
-                    >
-                      <Text size="sm" truncate>
-                        {meal.recipeTitle || meal.description}
-                      </Text>
-                      <ActionIcon
-                        color="red"
-                        variant="subtle"
-                        size="xs"
-                        onClick={() =>
-                          onDeletePlannedRecipe(dateString, meal.id)
-                        }
-                        style={{ position: "absolute", top: 2, right: 2 }}
-                        title="Remove meal"
-                      >
-                        <IconTrash size={12} />
-                      </ActionIcon>
-                    </Paper>
-                  ))}
-                  {recipesForThisDay.length === 0 &&
-                    !isMobile && ( // Placeholder text for empty desktop days
-                      <Text c="dimmed" ta="center" size="xs" p="md">
-                        - Drag recipes here -
-                      </Text>
-                    )}
-                  {recipesForThisDay.length === 0 && isMobile && (
-                    <Text c="dimmed" ta="center" size="xs" p="md">
-                      - Tap + to add recipes -
-                    </Text>
-                  )}
-                </DayColumn>
+                  allRecipes={allRecipes}
+                  onDeletePlannedRecipe={onDeletePlannedRecipe}
+                />
               </Box>
             );
           })}
@@ -422,32 +434,134 @@ function WeeklyCalendarView({
 // --- Main MealPlanner Component ---
 export default function MealPlanner() {
   const theme = useMantineTheme();
+  const isMobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm})`);
+
   const [allRecipes, setAllRecipes] = useState([]);
-  const [loadingRecipes, setLoadingRecipes] = useState(true);
   const [currentDate, setCurrentDate] = useState(dayjs());
-  // New plannedMeals structure: { 'YYYY-MM-DD': [ {recipeId, recipeTitle, id (instanceId)}, ... ] }
   const [plannedMeals, setPlannedMeals] = useState({});
   const [draggedRecipe, setDraggedRecipe] = useState(null);
 
-  const isMobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm})`);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const [
     selectRecipeModalOpened,
     { open: openSelectRecipeModal, close: closeSelectRecipeModal },
   ] = useDisclosure(false);
-  const [modalTargetDate, setModalTargetDate] = useState(null); // Changed from modalTargetSlot
+  const [modalTargetDate, setModalTargetDate] = useState(null);
 
-  const sensors = useSensors(/* ... (same) ... */);
+  // DND Sensors (Simplified)
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        delay: 100,
+        tolerance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor)
+  );
+
+  // Fetch All Recipes
   useEffect(() => {
-    /* ... (recipe fetching - same) ... */
+    setIsLoading(true);
+    setError(null);
+    const q = query(
+      collection(db, RECIPES_COLLECTION_ID),
+      orderBy("title", "asc")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const recipesData = [];
+        querySnapshot.forEach((doc) => {
+          recipesData.push({ ...doc.data(), id: doc.id });
+        });
+        setAllRecipes(recipesData);
+        // Consider setting isLoading to false only after both recipes and plans are loaded
+      },
+      (err) => {
+        console.error("Error fetching recipes: ", err);
+        setError("Failed to load recipes. Please try again later.");
+        setAllRecipes([]);
+      }
+    );
+    // Set loading to false after initial recipe load attempt or if plan loading is also considered
+    // For now, recipes loading manages its part of isLoading.
+    // If combined, this setIsLoading(false) would move.
+    // setIsLoading(false); // This might be too soon if plan is also loading.
+    return () => unsubscribe();
   }, []);
-  const handleNextWeek = () => setCurrentDate(currentDate.add(1, "week"));
+
+  // Fetch/Subscribe to Meal Plan using onSnapshot
+  useEffect(() => {
+    setIsLoading(true); // Set loading true when we start fetching plan
+    setError(null);
+    const planDocRef = doc(
+      db,
+      MEAL_PLANS_COLLECTION_ID,
+      FAMILY_MEAL_PLAN_DOC_ID
+    );
+
+    const unsubscribe = onSnapshot(
+      planDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setPlannedMeals(docSnap.data().meals || {});
+        } else {
+          setPlannedMeals({});
+          // console.log("Meal plan document does not exist. A new one can be created on save.");
+        }
+        setIsLoading(false); // Set loading to false after plan is fetched/updated
+      },
+      (err) => {
+        console.error("Error fetching meal plan:", err);
+        setError("Failed to load meal plan. Please try again later.");
+        setPlannedMeals({});
+        setIsLoading(false); // Also set loading to false on error
+      }
+    );
+    return () => unsubscribe();
+  }, []); // Runs once on mount
+
+  // Save Plan to Firestore
+  const savePlanToFirestore = useCallback(async (newPlanData) => {
+    // Consider a more subtle loading indicator for saves if full overlay is too much
+    // setIsLoading(true);
+    setError(null);
+    try {
+      const planDocRef = doc(
+        db,
+        MEAL_PLANS_COLLECTION_ID,
+        FAMILY_MEAL_PLAN_DOC_ID
+      );
+      await setDoc(planDocRef, {
+        meals: newPlanData,
+        updatedAt: serverTimestamp(),
+      });
+      // console.log("Meal plan saved successfully!");
+    } catch (err) {
+      console.error("Error saving meal plan:", err);
+      setError(
+        "Failed to save meal plan. Please check your connection and try again."
+      );
+    } finally {
+      // setIsLoading(false); // Stop loading after save attempt
+    }
+  }, []); // db, MEAL_PLANS_COLLECTION_ID, FAMILY_MEAL_PLAN_DOC_ID are constants from outer scope
+
+  // Week Navigation
+  const handleNextWeek = () => setCurrentDate((prev) => prev.add(1, "week"));
   const handlePreviousWeek = () =>
-    setCurrentDate(currentDate.subtract(1, "week"));
+    setCurrentDate((prev) => prev.subtract(1, "week"));
   const handleGoToToday = () => setCurrentDate(dayjs());
 
+  // DND Handlers
   function handleDragStart(event) {
-    /* ... (same, respects isMobile) ... */
+    if (isMobile) return;
+    const { active } = event;
+    if (active.data.current?.type === "recipe") {
+      setDraggedRecipe(active.data.current.recipe);
+    }
   }
 
   function handleDragEnd(event) {
@@ -455,69 +569,66 @@ export default function MealPlanner() {
     const { active, over } = event;
     setDraggedRecipe(null);
 
-    // Check if dropped on a day column
     if (
       over &&
       active.data.current?.type === "recipe" &&
       over.data.current?.type === "day"
     ) {
-      const recipe = active.data.current.recipe;
-      const targetDate = over.data.current.date; // Dropping directly on a day
+      const recipeBeingDragged = active.data.current.recipe;
+      const targetDate = over.data.current.date;
 
-      if (recipe && targetDate) {
-        setPlannedMeals((prev) => {
-          const dayMeals = prev[targetDate] || [];
-          const newMeal = {
-            recipeId: recipe.id,
-            recipeTitle: recipe.title,
-            prepTime: recipe.prepTime,
-            id: `${recipe.id}-${Date.now()}`,
-          };
-          return { ...prev, [targetDate]: [...dayMeals, newMeal] };
-        });
+      if (recipeBeingDragged && targetDate) {
+        const newPlan = { ...plannedMeals };
+        const dayMeals = newPlan[targetDate] || [];
+        const newMealInstance = {
+          recipeId: recipeBeingDragged.id,
+          instanceId: `${recipeBeingDragged.id}-${Date.now()}`,
+        };
+        newPlan[targetDate] = [...dayMeals, newMealInstance];
+        setPlannedMeals(newPlan); // Optimistic update
+        savePlanToFirestore(newPlan);
       }
     }
   }
 
+  // Mobile: Open Modal
   const handleOpenModalForDate = (dateString) => {
-    // Renamed from handleOpenModalForSlot
     setModalTargetDate(dateString);
     openSelectRecipeModal();
   };
 
-  const handleRecipeSelectFromModal = (recipe) => {
-    if (recipe && modalTargetDate) {
-      setPlannedMeals((prev) => {
-        const dayMeals = prev[modalTargetDate] || [];
-        const newMeal = {
-          recipeId: recipe.id,
-          recipeTitle: recipe.title,
-          prepTime: recipe.prepTime,
-          id: `${recipe.id}-${Date.now()}`,
-        };
-        return { ...prev, [modalTargetDate]: [...dayMeals, newMeal] };
-      });
+  // Mobile: Recipe Selected from Modal
+  const handleRecipeSelectFromModal = (selectedRecipe) => {
+    if (selectedRecipe && modalTargetDate) {
+      const newPlan = { ...plannedMeals };
+      const dayMeals = newPlan[modalTargetDate] || [];
+      const newMealInstance = {
+        recipeId: selectedRecipe.id,
+        instanceId: `${selectedRecipe.id}-${Date.now()}`,
+      };
+      newPlan[modalTargetDate] = [...dayMeals, newMealInstance];
+      setPlannedMeals(newPlan); // Optimistic update
+      savePlanToFirestore(newPlan);
     }
     closeSelectRecipeModal();
-    setModalTargetDate(null); // Reset target date
+    setModalTargetDate(null);
   };
 
+  // Delete Planned Recipe
   const handleDeletePlannedRecipe = (dateString, mealInstanceId) => {
-    setPlannedMeals((prev) => {
-      const dayMeals = prev[dateString] || [];
-      const updatedDayMeals = dayMeals.filter(
-        (meal) => meal.id !== mealInstanceId
-      );
-      if (updatedDayMeals.length === 0) {
-        const newPlan = { ...prev };
-        delete newPlan[dateString];
-        return newPlan;
-      }
-      return {
-        ...prev,
-        [dateString]: updatedDayMeals,
-      };
-    });
+    const newPlan = { ...plannedMeals };
+    const dayMeals = newPlan[dateString] || [];
+    const updatedDayMeals = dayMeals.filter(
+      (meal) => meal.instanceId !== mealInstanceId
+    );
+
+    if (updatedDayMeals.length === 0) {
+      delete newPlan[dateString];
+    } else {
+      newPlan[dateString] = updatedDayMeals;
+    }
+    setPlannedMeals(newPlan); // Optimistic update
+    savePlanToFirestore(newPlan);
   };
 
   return (
@@ -531,52 +642,137 @@ export default function MealPlanner() {
         shadow="none"
         p={0}
         radius="md"
-        style={{ height: "100%", display: "flex", flexDirection: "column" }}
+        style={{
+          height: "calc(100vh - 80px)", // Adjust based on AppShell header/padding
+          display: "flex",
+          flexDirection: "column",
+          position: "relative",
+        }}
       >
+        <LoadingOverlay
+          visible={isLoading && !error}
+          zIndex={1000}
+          overlayProps={{ radius: "sm", blur: 2 }}
+        />
+
         <Group
           justify="space-between"
-          mb="md"
+          align="center"
           p="md"
-          style={{ borderBottom: "1px solid var(--mantine-color-gray-3)" }}
+          style={{ borderBottom: `1px solid ${theme.colors.gray[3]}` }}
         >
           <Title order={2}>Meal Planner</Title>
-          <Group> {/* ... Week Nav Icons ... */} </Group>
+          <Group>
+            <Button
+              onClick={handleGoToToday}
+              variant="light"
+              leftSection={<IconCalendarEvent size={16} />}
+            >
+              Today
+            </Button>
+            <ActionIcon
+              onClick={handlePreviousWeek}
+              title="Previous week"
+              variant="outline"
+              size="lg"
+            >
+              <IconChevronLeft />
+            </ActionIcon>
+            <ActionIcon
+              onClick={handleNextWeek}
+              title="Next week"
+              variant="outline"
+              size="lg"
+            >
+              <IconChevronRight />
+            </ActionIcon>
+          </Group>
         </Group>
 
-        <Grid style={{ flexGrow: 1, margin: 0 }} gutter={0}>
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size="1rem" />}
+            title="Error"
+            color="red"
+            withCloseButton
+            onClose={() => setError(null)}
+            m="md"
+          >
+            {error}
+          </Alert>
+        )}
+
+        <Grid style={{ flexGrow: 1, margin: 0, overflow: "hidden" }} gutter={0}>
           {!isMobile && (
             <Grid.Col
               span={{ md: 3 }}
-              p="md"
               style={{
-                borderRight: "1px solid var(--mantine-color-gray-3)",
+                borderRight: `1px solid ${theme.colors.gray[3]}`,
                 height: "100%",
-                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
               }}
             >
-              <RecipeDiscoveryPanel recipes={allRecipes} isMobile={isMobile} />
+              <Box
+                style={{
+                  flexGrow: 1,
+                  overflowY: "auto",
+                  padding: theme.spacing.md,
+                }}
+              >
+                <RecipeDiscoveryPanel
+                  recipes={allRecipes}
+                  isMobile={isMobile}
+                />
+              </Box>
             </Grid.Col>
           )}
           <Grid.Col
             span={{ base: 12, md: isMobile ? 12 : 9 }}
-            p="xs"
-            /* Reduced padding for this col slightly */ style={{
+            style={{
               height: "100%",
-              overflowY: isMobile ? "auto" : "hidden",
+              display: "flex",
+              flexDirection: "column",
             }}
           >
-            <WeeklyCalendarView
-              week={currentDate.toDate()}
-              plannedMeals={plannedMeals}
-              isMobile={isMobile}
-              onDayClick={handleOpenModalForDate} // Renamed prop
-              onDeletePlannedRecipe={handleDeletePlannedRecipe} // Pass delete handler
-            />
+            <Box
+              style={{
+                flexGrow: 1,
+                overflowY: "auto",
+                padding: isMobile ? theme.spacing.xs : theme.spacing.md,
+              }}
+            >
+              <WeeklyCalendarView
+                week={currentDate.toDate()}
+                plannedMeals={plannedMeals}
+                isMobile={isMobile}
+                onDayClick={handleOpenModalForDate}
+                onDeletePlannedRecipe={handleDeletePlannedRecipe}
+                allRecipes={allRecipes}
+              />
+            </Box>
           </Grid.Col>
         </Grid>
 
         {!isMobile && draggedRecipe && (
-          <DragOverlay dropAnimation={null}>{/* ... */}</DragOverlay>
+          <DragOverlay dropAnimation={null}>
+            <Paper
+              p="sm"
+              shadow="xl"
+              withBorder
+              radius="md"
+              style={{ backgroundColor: theme.white }}
+            >
+              <Text size="sm" fw={500} truncate>
+                {draggedRecipe.title}
+              </Text>
+              {draggedRecipe.prepTime && (
+                <Text size="xs" c="dimmed">
+                  Prep: {draggedRecipe.prepTime}
+                </Text>
+              )}
+            </Paper>
+          </DragOverlay>
         )}
 
         <SelectRecipeModal
@@ -584,7 +780,7 @@ export default function MealPlanner() {
           onClose={closeSelectRecipeModal}
           recipes={allRecipes}
           onSelectRecipe={handleRecipeSelectFromModal}
-          targetDate={modalTargetDate} // Renamed prop
+          targetDate={modalTargetDate}
         />
       </Paper>
     </DndContext>
