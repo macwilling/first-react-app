@@ -1,4 +1,3 @@
-// src/components/NotesBoard.jsx
 import React, { useState, useEffect } from "react";
 import {
   Paper,
@@ -12,12 +11,14 @@ import {
   Text,
   SimpleGrid,
   Card,
-  Textarea,
   ColorInput,
   LoadingOverlay,
   Alert,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { RichTextEditor } from "@mantine/tiptap";
+import { useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
 import {
   IconPlus,
   IconTrash,
@@ -36,9 +37,7 @@ import {
   deleteDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { useAuth } from "../contexts/AuthContext"; // Import useAuth
-
-// const NOTES_COLLECTION = "notes"; // Will be nested
+import { useAuth } from "../contexts/AuthContext";
 
 const MANTINE_COLORS = [
   "var(--mantine-color-gray-3)",
@@ -66,9 +65,30 @@ export default function NotesBoard() {
   const [editingNote, setEditingNote] = useState(null);
   const [newNote, setNewNote] = useState({
     title: "",
-    content: "",
+    content: "", // This will store HTML from the RichTextEditor
     color: MANTINE_COLORS[0],
   });
+
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: newNote.content,
+    onUpdate: ({ editor }) => {
+      setNewNote((prev) => ({ ...prev, content: editor.getHTML() }));
+    },
+  });
+
+  useEffect(() => {
+    if (editor && opened) {
+      // When modal opens, or content/editor changes, update editor
+      if (editor.getHTML() !== (newNote.content || "")) {
+        editor.commands.setContent(newNote.content || "");
+      }
+      // Optionally, try to focus the editor
+      // if (!editor.isFocused) {
+      //   editor.commands.focus();
+      // }
+    }
+  }, [editor, newNote.content, opened]);
 
   useEffect(() => {
     if (!familyId) {
@@ -108,14 +128,15 @@ export default function NotesBoard() {
       setEditingNote(noteToEdit);
       setNewNote({
         title: noteToEdit.title,
-        content: noteToEdit.content,
+        content: noteToEdit.content, // HTML content
         color: noteToEdit.color,
       });
+      // Content will be set in the editor by the useEffect [editor, newNote.content, opened]
     } else {
       setEditingNote(null);
       setNewNote({
         title: "",
-        content: "",
+        content: "", // Empty content for new note
         color:
           MANTINE_COLORS[Math.floor(Math.random() * MANTINE_COLORS.length)],
       });
@@ -128,7 +149,11 @@ export default function NotesBoard() {
       setError("Cannot save note: No family selected.");
       return;
     }
-    if (!newNote.title.trim() && !newNote.content.trim()) {
+    // Content check can be more nuanced, as empty HTML might be "<p></p>"
+    if (
+      !newNote.title.trim() &&
+      (!newNote.content || newNote.content === "<p></p>")
+    ) {
       setError("Note title or content cannot be empty.");
       return;
     }
@@ -137,7 +162,7 @@ export default function NotesBoard() {
     const notesCollectionPath = `families/${familyId}/notes`;
     const notePayload = {
       title: newNote.title,
-      content: newNote.content,
+      content: newNote.content, // HTML content from editor
       color: newNote.color,
     };
 
@@ -210,11 +235,13 @@ export default function NotesBoard() {
           {error}
         </Alert>
       )}
+
       <Modal
         opened={opened}
         onClose={close}
         title={editingNote ? "Edit Note" : "Add New Note"}
         centered
+        size="lg" // Increased size for better editor experience
       >
         <Stack>
           <TextInput
@@ -226,15 +253,56 @@ export default function NotesBoard() {
             }
             data-autofocus
           />
-          <Textarea
-            label="Content"
-            placeholder="Write your note here..."
-            value={newNote.content}
-            onChange={(e) =>
-              setNewNote({ ...newNote, content: e.currentTarget.value })
-            }
-            minRows={4}
-          />
+
+          <RichTextEditor
+            editor={editor}
+            style={{
+              minHeight: "250px", // Keep: This is working
+              border: "1px dashed blue", // Keep: This is working
+              // We'll let default display/flex behavior of children take over first
+            }}
+          >
+            <RichTextEditor.Toolbar
+              // REMOVE sticky and stickyOffset for now to simplify
+              // sticky
+              // stickyOffset={60}
+              style={{
+                border: "3px solid red", // Make toolbar very obvious
+                minHeight: "40px", // Ensure it has some height
+                padding: "5px", // Add some padding
+                backgroundColor: "rgba(255, 230, 230, 0.5)", // Light red background
+                // Remove zIndex and position:relative for now
+              }}
+            >
+              {/* Your ControlGroups are fine here */}
+              <RichTextEditor.ControlsGroup>
+                <RichTextEditor.Bold />
+                <RichTextEditor.Italic />
+                <RichTextEditor.Underline />
+                <RichTextEditor.Strikethrough />
+                <RichTextEditor.ClearFormatting />
+              </RichTextEditor.ControlsGroup>
+              <RichTextEditor.ControlsGroup>
+                <RichTextEditor.H1 />
+                <RichTextEditor.H2 />
+                <RichTextEditor.H3 />
+                <RichTextEditor.BulletList />
+                <RichTextEditor.OrderedList />
+                <RichTextEditor.Blockquote />
+              </RichTextEditor.ControlsGroup>
+            </RichTextEditor.Toolbar>
+
+            <RichTextEditor.Content
+              style={{
+                minHeight: "150px", // Ensure content area has min height
+                border: "3px solid green", // Make content area very obvious
+                padding: "10px", // Add some padding
+                backgroundColor: "rgba(230, 255, 230, 0.5)", // Light green background
+                // Remove flexGrow for now
+              }}
+            />
+          </RichTextEditor>
+
           <ColorInput
             label="Note Color"
             placeholder="Pick a color"
@@ -306,9 +374,13 @@ export default function NotesBoard() {
                   </Group>
                 </Group>
               </Card.Section>
-              <Text mt="sm" size="sm" style={{ whiteSpace: "pre-wrap" }}>
-                {note.content}
-              </Text>
+              {/* Render HTML content safely */}
+              <Text
+                mt="sm"
+                size="sm"
+                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                dangerouslySetInnerHTML={{ __html: note.content }}
+              />
             </Card>
           ))}
         </SimpleGrid>
