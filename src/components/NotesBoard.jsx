@@ -14,6 +14,7 @@ import {
   ColorInput,
   LoadingOverlay,
   Alert,
+  Avatar,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { RichTextEditor } from "@mantine/tiptap";
@@ -241,7 +242,9 @@ export default function NotesBoard() {
         onClose={close}
         title={editingNote ? "Edit Note" : "Add New Note"}
         centered
-        size="lg" // Increased size for better editor experience
+        size="lg"
+        radius="lg"
+        overlayProps={{ blur: 3, opacity: 0.2 }}
       >
         <Stack>
           <TextInput
@@ -253,34 +256,30 @@ export default function NotesBoard() {
             }
             data-autofocus
           />
-
           <RichTextEditor
             editor={editor}
             style={{
-              minHeight: "250px", // Keep: This is working
-              border: "1px dashed blue", // Keep: This is working
-              // We'll let default display/flex behavior of children take over first
+              minHeight: "250px",
+              border: "1px dashed blue",
             }}
           >
             <RichTextEditor.Toolbar
-              // REMOVE sticky and stickyOffset for now to simplify
-              // sticky
-              // stickyOffset={60}
               style={{
-                border: "3px solid red", // Make toolbar very obvious
-                minHeight: "40px", // Ensure it has some height
-                padding: "5px", // Add some padding
-                backgroundColor: "rgba(255, 230, 230, 0.5)", // Light red background
-                // Remove zIndex and position:relative for now
+                border: "3px solid red",
+                minHeight: "40px",
+                padding: "5px",
+                backgroundColor: "rgba(255, 230, 230, 0.5)",
               }}
             >
-              {/* Your ControlGroups are fine here */}
               <RichTextEditor.ControlsGroup>
                 <RichTextEditor.Bold />
                 <RichTextEditor.Italic />
                 <RichTextEditor.Underline />
                 <RichTextEditor.Strikethrough />
                 <RichTextEditor.ClearFormatting />
+                <RichTextEditor.Code />
+                <RichTextEditor.Highlight />
+                <RichTextEditor.Link />
               </RichTextEditor.ControlsGroup>
               <RichTextEditor.ControlsGroup>
                 <RichTextEditor.H1 />
@@ -291,18 +290,15 @@ export default function NotesBoard() {
                 <RichTextEditor.Blockquote />
               </RichTextEditor.ControlsGroup>
             </RichTextEditor.Toolbar>
-
             <RichTextEditor.Content
               style={{
-                minHeight: "150px", // Ensure content area has min height
-                border: "3px solid green", // Make content area very obvious
-                padding: "10px", // Add some padding
-                backgroundColor: "rgba(230, 255, 230, 0.5)", // Light green background
-                // Remove flexGrow for now
+                minHeight: "150px",
+                border: "3px solid green",
+                padding: "10px",
+                backgroundColor: "rgba(230, 255, 230, 0.5)",
               }}
             />
           </RichTextEditor>
-
           <ColorInput
             label="Note Color"
             placeholder="Pick a color"
@@ -312,10 +308,13 @@ export default function NotesBoard() {
             format="hex"
           />
           <Button
+            variant="gradient"
+            gradient={{ from: "violet", to: "cyan", deg: 90 }}
             onClick={handleSubmitNote}
             fullWidth
             mt="md"
             loading={loading}
+            style={{ fontWeight: 600 }}
           >
             {editingNote ? "Save Changes" : "Add Note"}
           </Button>
@@ -325,8 +324,10 @@ export default function NotesBoard() {
       <Group justify="space-between" mb="xl">
         <Title order={2}>Notes Board</Title>
         <Button
-          onClick={() => handleOpenModal()}
+          variant="gradient"
+          gradient={{ from: "violet", to: "cyan", deg: 90 }}
           leftSection={<IconPlus size={18} />}
+          onClick={() => handleOpenModal()}
           disabled={!familyId || loading}
         >
           New Note
@@ -338,22 +339,43 @@ export default function NotesBoard() {
           {notes.map((note) => (
             <Card
               key={note.id}
-              shadow="sm"
-              padding="lg"
-              radius="md"
-              withBorder
-              style={{ backgroundColor: note.color }}
+              shadow="xl"
+              radius="xl"
+              p="md"
+              style={{
+                background: note.color,
+                transition:
+                  "transform 0.18s cubic-bezier(.4,2,.6,1), box-shadow 0.18s cubic-bezier(.4,2,.6,1)",
+                cursor: "pointer",
+                boxShadow: "0 4px 32px 0 rgba(80,80,180,0.10)",
+                border: "1.5px solid rgba(80,80,180,0.08)",
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.transform = "scale(1.04)")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.transform = "scale(1)")
+              }
             >
               <Card.Section
                 withBorder
                 inheritPadding
                 py="xs"
-                style={{ borderColor: "rgba(0,0,0,0.1)" }}
+                style={{
+                  borderColor: "rgba(0,0,0,0.1)",
+                  background: "rgba(255,255,255,0.7)",
+                  borderRadius: 12,
+                }}
               >
                 <Group justify="space-between">
-                  <Text fw={500} truncate>
-                    {note.title || "Untitled Note"}
-                  </Text>
+                  <Group>
+                    <Avatar color="violet" radius="xl" size="md">
+                      {note.title?.[0]?.toUpperCase() || "N"}
+                    </Avatar>
+                    <Text fw={600} truncate>
+                      {note.title || "Untitled Note"}
+                    </Text>
+                  </Group>
                   <Group gap="xs">
                     <ActionIcon
                       variant="subtle"
@@ -374,11 +396,16 @@ export default function NotesBoard() {
                   </Group>
                 </Group>
               </Card.Section>
-              {/* Render HTML content safely */}
               <Text
                 mt="sm"
                 size="sm"
-                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  background: "rgba(255,255,255,0.5)",
+                  borderRadius: 8,
+                  padding: 8,
+                }}
                 dangerouslySetInnerHTML={{ __html: note.content }}
               />
             </Card>
